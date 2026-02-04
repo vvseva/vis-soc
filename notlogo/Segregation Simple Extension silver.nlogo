@@ -51,7 +51,7 @@ to setup
   ;; assign a color to each turtle from the list of our colors
   ask families
     [ set color (item (random number-of-ethnicities) colors)
-      set my-%-similar-wanted random %-similar-wanted
+      set my-%-similar-wanted %-similar-wanted
       set my-catchment-distance catchment-distance
       set my-adventurousness random-float 1
       set my-commitment random-float 1
@@ -184,7 +184,7 @@ to place-temporary-venue
     ;; 4. Update Properties and Draw Catchment
     ask temp-venue [
       set color new-venue-color
-      set my-venue-exclusivity new-venue-exclusivity
+      set my-venue-exclusivity venue-exclusivity
       set my-venue-obligatoriness 1
 
       ask patches in-radius catchment-distance [
@@ -324,7 +324,7 @@ number
 number
 500
 2500
-2150.0
+2270.0
 10
 1
 NIL
@@ -339,7 +339,7 @@ SLIDER
 %-similar-wanted
 0.0
 100.0
-90.0
+68.0
 1.0
 1
 %
@@ -416,9 +416,9 @@ SLIDER
 533
 neighborhood-distance
 neighborhood-distance
-0
+1
 20
-3.0
+2.0
 1
 1
 NIL
@@ -433,7 +433,7 @@ venues-number
 venues-number
 0
 10
-0.0
+2.0
 1
 1
 NIL
@@ -448,7 +448,7 @@ catchment-distance
 catchment-distance
 0
 20
-10.0
+11.0
 1
 1
 NIL
@@ -457,16 +457,16 @@ HORIZONTAL
 SLIDER
 815
 144
-988
+1037
 177
 venue-exclusivity
 venue-exclusivity
 0.0
-100.0
-100.0
-1.0
 1
-%
+0.0
+0.1
+1
+NIL
 HORIZONTAL
 
 CHOOSER
@@ -477,22 +477,7 @@ CHOOSER
 new-venue-color
 new-venue-color
 15 55 45 105 25
-4
-
-SLIDER
-820
-325
-1052
-358
-new-venue-exclusivity
-new-venue-exclusivity
-0
 1
-1.0
-0.1
-1
-NIL
-HORIZONTAL
 
 BUTTON
 815

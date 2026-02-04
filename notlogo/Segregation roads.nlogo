@@ -21,7 +21,7 @@ to setup
 
   ask turtles
     [ set color (item (random number-of-ethnicities) colors)
-      set my-%-similar-wanted random %-similar-wanted]
+      set my-%-similar-wanted %-similar-wanted]
 
   update-turtles
   update-globals
@@ -29,7 +29,7 @@ to setup
 end
 
 to go
-  if all? turtles [happy?] [ stop ]
+  ;;if all? turtles [happy?] [ stop ]
   move-unhappy-turtles
   update-turtles
   update-globals
@@ -118,69 +118,6 @@ to update-globals
 
   set percent-unhappy (count turtles with [not happy?]) / (count turtles) * 100
 end
-
-;; --- NEW MANUAL PLACEMENT PROCEDURES ---
-
-to place-temporary-venue
-  ;; 1. Check if we are already holding a temporary venue. If so, remove it to start over.
-  if temp-venue != nobody [
-    ask temp-venue [ die ]
-    set temp-venue nobody
-    ask patches [ set pcolor white ] ;; clear old catchment highlight
-  ]
-
-  ;; 2. Instruct user
-  user-message "Set your venue parameters using the sliders/choosers, then CLICK a location in the world to place the temporary venue."
-
-  ;; 3. Wait for mouse input
-  ;; This loop pauses execution until the mouse is clicked
-  while [not mouse-down?] [ every 0.1 [] ]
-
-  ;; 4. Create the venue at mouse coordinates
-  create-venues 1 [
-    setxy mouse-xcor mouse-ycor
-    set shape "house"
-
-    ;; Set properties based on Interface Inputs (See instructions below)
-    set color new-venue-color
-    set my-venue-exclusivity new-venue-exclusivity
-    set my-venue-obligatoriness 1
-
-    set temp-venue self ;; Mark this as the temporary one
-  ]
-
-  ;; 5. Visualize Catchment Area
-  ;; We use the global 'catchment-distance' to show which families could theoretically reach it
-  ask patches in-radius catchment-distance [
-    set pcolor lime ;; Set catchment area to light green
-  ]
-
-  ;; 6. Wait for mouse release so we don't accidentally click something else immediately
-  while [mouse-down?] [ every 0.1 [] ]
-end
-
-to confirm-venue-placement
-  ifelse temp-venue != nobody [
-    ;; Confirm the placement
-    set temp-venue nobody ;; It is no longer temporary
-
-    ;; Clear the visualization
-    ask patches [ set pcolor white ]
-
-    ;; Force families to re-evaluate options immediately so they recognize the new venue
-    evaluate-venues
-    update-families
-    update-globals
-
-    user-message "Venue Confirmed."
-  ]
-  [
-    ;; Error handling if they press confirm without placing first
-    user-message "No temporary venue found. Please click 'Place Temporary Venue' first."
-  ]
-end
-
-;; ---------------------------------------
 @#$#@#$#@
 GRAPHICS-WINDOW
 273
@@ -276,7 +213,7 @@ number
 number
 500
 2500
-1680.0
+1950.0
 10
 1
 NIL
@@ -291,7 +228,7 @@ SLIDER
 %-similar-wanted
 0.0
 100.0
-84.0
+40.0
 1.0
 1
 %
@@ -340,7 +277,7 @@ number-of-ethnicities
 number-of-ethnicities
 2
 5
-3.0
+2.0
 1
 1
 NIL

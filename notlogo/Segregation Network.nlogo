@@ -364,7 +364,7 @@ number
 number
 500
 2500
-1010.0
+1870.0
 10
 1
 NIL
@@ -379,7 +379,7 @@ SLIDER
 %-similar-wanted
 0.0
 100.0
-24.0
+33.0
 1.0
 1
 %
@@ -428,7 +428,7 @@ number-of-ethnicities
 number-of-ethnicities
 2
 5
-4.0
+2.0
 1
 1
 NIL
@@ -548,7 +548,7 @@ SLIDER
 %-closeness-wanted
 0
 100
-80.0
+78.0
 1
 1
 %
