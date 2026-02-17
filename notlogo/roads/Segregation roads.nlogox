@@ -9,7 +9,14 @@ globals [
   
   road-dataset
   water-dataset
+  
+  ;; OPTIMIZATION: Cache the patches where turtles can live
+  habitable-patches
 ]
+
+;; LOGIC VARIABLE: Stores "True" if the patch is a road/water, 
+;; independent of the visual pcolor.
+patches-own [ is-road? ]
 
 turtles-own [
   happy?
@@ -24,8 +31,8 @@ undirected-link-breed [rays ray]
 to setup
   ;; 1. Handle World Resizing
   ifelse road-scenario = "real-norrkoping" [
-    resize-world 0 1000 0 400
-    set-patch-size 1
+    resize-world 0 500 0 200
+    set-patch-size 2
   ]
   [
     resize-world -25 25 -25 25
@@ -37,19 +44,22 @@ to setup
   set colors [red green yellow blue orange]
 
   ;; 3. Draw the Map
+  ;; We wrap this in no-display to speed up the drawing process
+  no-display
   draw-selected-scenario
+  
+  ;; 4. Cache Habitable Patches
+  ;; LOGIC FIX: We select patches that are NOT roads.
+  ;; This ensures turtles spawn only in safe areas, even if the road lines are thin vectors.
+  set habitable-patches patches with [not is-road?]
 
-  ;; 4. Spawn Turtles based on Density
-  ;; First, identify all patches that are NOT roads/walls
-  let valid-patches patches with [pcolor = black]
-  let available-spots count valid-patches
-
-  ;; Calculate how many turtles we need based on the slider %
+  ;; 5. Spawn Turtles based on Density
+  let available-spots count habitable-patches
   let target-population floor (available-spots * (density-percent / 100))
 
-  ;; Spawn them
   ifelse target-population > 0 [
-    ask n-of target-population valid-patches [
+    ;; Only spawn on habitable patches
+    ask n-of target-population habitable-patches [
       sprout 1 [
         set color (item (random number-of-ethnicities) colors)
         set shape "person"
@@ -58,13 +68,13 @@ to setup
     ]
   ]
   [
-    ;; Optional: Warn if density is 0 or map is full of roads
     if available-spots = 0 [ user-message "Map is completely blocked! No space for turtles." ]
   ]
 
   update-turtles
   update-globals
   reset-ticks
+  display ;; Force a display update after everything is ready
 end
 
 to go
@@ -77,31 +87,50 @@ end
 ;; --- SCENARIO GENERATION ---
 
 to draw-selected-scenario
-  ask patches [ set pcolor black ] ;; Reset background
+  ;; Reset world state
+  ask patches [ 
+    set pcolor black 
+    set is-road? false ;; Default: Safe to walk
+  ]
 
   (ifelse
     road-scenario = "empty" [
-      ;; Do nothing, just black void
+      ;; Do nothing
     ]
 
     road-scenario = "grid" [
       ask patches [
-        if (pxcor mod 10 = 0) or (pycor mod 10 = 0) [ set pcolor brown ]
+        if (pxcor mod 10 = 0) or (pycor mod 10 = 0) [ 
+          set pcolor brown 
+          set is-road? true
+        ]
       ]
     ]
 
     road-scenario = "norrkoping" [
       ask patches [
-        if abs (pycor - ( 8 * sin (pxcor * 5) )) < 2 [ set pcolor brown ]
-        if abs (pxcor + 5) < 1 [ set pcolor brown ]
+        if abs (pycor - ( 8 * sin (pxcor * 5) )) < 2 [ 
+          set pcolor brown 
+          set is-road? true
+        ]
+        if abs (pxcor + 5) < 1 [ 
+          set pcolor brown 
+          set is-road? true
+        ]
       ]
     ]
 
     road-scenario = "stockholm" [
       ask patches [
         let dist distancexy 0 0
-        if dist > 8 and dist < 13 [ set pcolor brown ]
-        if (abs pxcor < 1) or (abs pycor < 1) [ set pcolor black ]
+        if dist > 8 and dist < 13 [ 
+          set pcolor brown 
+          set is-road? true
+        ]
+        if (abs pxcor < 1) or (abs pycor < 1) [ 
+          set pcolor black 
+          set is-road? false
+        ]
       ]
     ]
 
@@ -110,29 +139,50 @@ to draw-selected-scenario
       ifelse ( file-exists? "waterways.shp" ) [
         set water-dataset gis:load-dataset "waterways.shp"
         gis:set-world-envelope (gis:envelope-of water-dataset)
-        foreach gis:feature-list-of water-dataset [ feature ->
-          ask patches gis:intersecting feature [ set pcolor blue ]
-        ]
+        
+        ;; VISUAL: Draw vectors (sharp edges) - User approved
+        gis:set-drawing-color blue
+        gis:draw water-dataset 1
+        
+        ;; LOGIC: Mark patches as blocked (invisible pcolor change, logical switch)
+        load-gis-logic water-dataset
       ]
       [ 
-        ;; Optional: Warning if missing, or just ignore
-        ;; user-message "waterways.shp missing" 
+        ;; Ignore if missing
       ]
 
       ;; B. Draw Roads (Brown)
       ifelse ( file-exists? "roads.shp" ) [
         set road-dataset gis:load-dataset "roads.shp"
-        ;; Ensure envelope matches roads if water was missing/different
         gis:set-world-envelope (gis:envelope-of road-dataset)
-        foreach gis:feature-list-of road-dataset [ feature ->
-          ask patches gis:intersecting feature [ set pcolor brown ]
-        ]
+        
+        ;; VISUAL: Draw vectors (sharp edges) - User approved
+        gis:set-drawing-color brown
+        gis:draw road-dataset 1
+        
+        ;; LOGIC: Mark patches as blocked
+        ;; This step is slow but NECESSARY for the model to work correctly.
+        load-gis-logic road-dataset
       ]
       [
         user-message "roads.shp missing. Please add the file."
       ]
     ]
   )
+end
+
+;; Safe Logic Loader
+to load-gis-logic [ dataset ]
+  ;; We iterate through the features to mark the underlying patches.
+  ;; This ensures turtles know where the lines are.
+  foreach gis:feature-list-of dataset [ feature ->
+    ask patches gis:intersecting feature [ 
+      set is-road? true
+      ;; OPTIONAL: You can set pcolor to brown here if you want to see the "blocky" logic.
+      ;; If you leave it black, you only see the nice vector lines, which looks better.
+      ;; set pcolor brown 
+    ]
+  ]
 end
 
 ;; --- CORE LOGIC ---
@@ -146,31 +196,33 @@ to update-turtles
     set similar-nearby count nearby-visible-turtles with [color = [color] of myself]
     set other-nearby count nearby-visible-turtles with [color != [color] of myself]
 
-    let p-similarity 0.5
+    ;; --- HAPPINESS LOGIC ---
+    let similarity-percent 100 ;; Default: happy if alone
+    
     if total-nearby > 0 [
-      set p-similarity (similar-nearby / total-nearby)
+      set similarity-percent (similar-nearby / total-nearby) * 100
     ]
 
-    set my-utility (beta-visible * p-similarity)
-    set happy? (my-utility >= utility-threshold)
+    set happy? (similarity-percent >= %-similar-wanted)
+    set my-utility (similarity-percent / 100)
   ]
 end
 
-;; --- RAY CASTING ---
+;; --- RAY CASTING (OPTIMIZED) ---
 to-report has-line-of-sight? [ target ]
   let dist distance target
   if dist = 0 [ report true ]
 
   let ang towards target
-  let step 0.5
+  let step 1.0
   let current-dist step
 
   while [current-dist < dist] [
     let p patch-at-heading-and-distance ang current-dist
     
-    ;; Check for Obstacles (Brown Roads OR Blue Water)
-    let terrain [pcolor] of p
-    if terrain = brown or terrain = blue [
+    ;; OPTIMIZATION: Check against the cached habitable-set
+    ;; This now checks [not is-road?] implicitly
+    if not member? p habitable-patches [
       report false 
     ]
     set current-dist current-dist + step
@@ -179,7 +231,7 @@ to-report has-line-of-sight? [ target ]
   report true
 end
 
-;; --- MOVEMENT ---
+;; --- MOVEMENT (OPTIMIZED) ---
 
 to move-unhappy-turtles
   ask turtles with [ not happy? ]
@@ -187,16 +239,20 @@ to move-unhappy-turtles
 end
 
 to find-new-spot
-  ;; Look for spots that are NOT brown AND NOT blue
-  let valid-spots patches with [
-    pcolor != brown and 
-    pcolor != blue and 
-    not any? turtles-here
+  ;; Rejection Sampling using the habitable-patches cache
+  let target nobody
+  let tries 0
+  
+  while [target = nobody and tries < 10] [
+    let potential-spot one-of habitable-patches
+    
+    if not any? turtles-on potential-spot [
+      set target potential-spot
+    ]
+    set tries tries + 1
   ]
   
-  ifelse any? valid-spots
-    [ move-to one-of valid-spots ]
-    [ ]
+  if target != nobody [ move-to target ]
 end
 
 ;; --- DRAWING TOOLS ---
@@ -205,6 +261,7 @@ to draw-roads
     if mouse-down? [
       ask patch mouse-xcor mouse-ycor [
         set pcolor brown
+        set is-road? true ;; Sync logic
         ask turtles-here [ find-new-spot ]
       ]
       display
@@ -214,7 +271,10 @@ end
 to gentrify-roads
     if mouse-down? [
       ask patch mouse-xcor mouse-ycor [
-        if pcolor = brown [ set pcolor black ]
+        if pcolor = brown or is-road? [ 
+           set pcolor black 
+           set is-road? false ;; Sync logic
+        ]
       ]
       display
     ]
@@ -236,52 +296,36 @@ end
 ;; --- VIZ ---
 
 to show-vision-for-turtle
-  ;; If mouse is NOT down, clean up rays immediately
   if not mouse-down? [
     ask rays [ die ]
-    stop
   ]
 
-  ;; If mouse IS down, draw logic
   if mouse-down? [
     let target min-one-of turtles [distancexy mouse-xcor mouse-ycor]
-
+    
     if target != nobody [
-      ;; We only ask the target to calculate once per click-hold
       ask target [
-        ask my-rays [ die ] ;; Clear old ones
-
+        ask my-rays [ die ]
         let candidates other turtles in-radius vision-radius
+        
+        ;; Draw visible rays
         ask candidates [
           let visible? [has-line-of-sight? myself] of myself
-          create-ray-with myself [
-            ifelse visible?
-              [ set color green ]
-              [ set color red ]
-            set thickness 0.2
+          if visible? [
+            create-ray-with myself [
+              set color blue
+              set thickness 0.3 ]
           ]
         ]
       ]
-      ;; Simple wait to prevent flickering while holding down
       while [mouse-down?] [ display ]
-      ask rays [ die ] ;; Cleanup after release
+      ask rays [ die ]
     ]
+    display
   ]
-end
-
-to load-real-map
-  ;; Load the shapefile
-  set road-dataset gis:load-dataset "roads.shp"
-  
-  ;; Set the "world envelope" (coordinate boundaries) to match the file
-  gis:set-world-envelope (gis:envelope-of road-dataset)
-  
-  ;; Draw the roads brown
-  gis:set-drawing-color brown
-  gis:draw road-dataset 1 ;; 1 is the thickness
 end]]></code>
   <widgets>
-    <view x="280" wrappingAllowedX="true" y="15" frameRate="30.0" minPycor="0" height="392" showTickCounter="true" patchSize="1.0" fontSize="10" wrappingAllowedY="true" width="973" tickCounterLabel="ticks" maxPycor="400" updateMode="1" maxPxcor="1000" minPxcor="0"></view>
+    <view x="280" wrappingAllowedX="true" y="15" frameRate="30.0" minPycor="0" height="389" showTickCounter="true" patchSize="2.0" fontSize="10" wrappingAllowedY="true" width="965" tickCounterLabel="ticks" maxPycor="200" updateMode="1" maxPxcor="500" minPxcor="0"></view>
     <plot x="10" autoPlotX="true" yMax="100.0" autoPlotY="true" yAxis="%" y="238" xMin="0.0" height="175" legend="false" xMax="25.0" yMin="0.0" width="249" xAxis="time" display="Percent Similar">
       <setup></setup>
       <update></update>
@@ -298,18 +342,17 @@ end]]></code>
         <update>plot percent-unhappy</update>
       </pen>
     </plot>
-    <slider x="15" step="1" y="62" max="100" width="225" display="density-percent" height="50" min="0" direction="Horizontal" default="7.0" variable="density-percent" units="%"></slider>
-    <slider x="15" step="1.0" y="119" max="100.0" width="225" display="%-similar-wanted" height="50" min="0.0" direction="Horizontal" default="40.0" variable="%-similar-wanted" units="%"></slider>
+    <slider x="15" step="1" y="62" max="100" width="225" display="density-percent" height="50" min="0" direction="Horizontal" default="17.0" variable="density-percent" units="%"></slider>
+    <slider x="15" step="1.0" y="119" max="100.0" width="225" display="%-similar-wanted" height="50" min="0.0" direction="Horizontal" default="42.0" variable="%-similar-wanted" units="%"></slider>
     <button x="34" y="14" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="80" display="setup">setup</button>
     <button x="124" y="14" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="80" display="go">go</button>
     <slider x="35" step="1" y="605" max="5" width="192" display="number-of-ethnicities" height="50" min="2" direction="Horizontal" default="2.0" variable="number-of-ethnicities"></slider>
     <slider x="15" step="1" y="176" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
     <monitor x="270" precision="1" y="455" height="60" fontSize="11" width="108" display="Percent Similar">percent-similar</monitor>
     <monitor x="429" precision="1" y="455" height="60" fontSize="11" width="113" display="Percent Unhappy">percent-unhappy</monitor>
-    <slider x="270" step="1" y="530" max="20" width="172" display="vision-radius" height="50" min="0" direction="Horizontal" default="7.0" variable="vision-radius"></slider>
+    <slider x="270" step="1" y="530" max="20" width="172" display="vision-radius" height="50" min="0" direction="Horizontal" default="6.0" variable="vision-radius"></slider>
     <button x="439" y="530" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="92">draw-roads</button>
     <button x="438" y="575" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="95">gentrify-roads</button>
-    <button x="550" y="455" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="207">show-vision-for-turtle</button>
     <slider x="555" step="0.1" y="515" max="1" width="187" display="utility-threshold" height="50" min="0" direction="Horizontal" default="0.4" variable="utility-threshold"></slider>
     <slider x="555" step="0.1" y="577" max="1" width="172" display="beta-visible" height="50" min="0" direction="Horizontal" default="1.0" variable="beta-visible"></slider>
     <chooser x="740" y="565" height="60" variable="road-scenario" current="4" width="137" display="road-scenario">
@@ -319,6 +362,7 @@ end]]></code>
       <choice type="string" value="stockholm"></choice>
       <choice type="string" value="real-norrkoping"></choice>
     </chooser>
+    <button x="560" y="455" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="150">show-vision-for-turtle</button>
   </widgets>
   <info><![CDATA[## ACKNOWLEDGMENT
 
