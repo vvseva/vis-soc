@@ -3,68 +3,79 @@
   <code><![CDATA[extensions [ nw ]
 
 globals [
-  percent-similar  ;; on the average, what percent of a turtle's neighbors are the same color?
-  percent-unhappy  ;; what percent of the turtles are unhappy?
-  colors           ;; a list of colors we use to color the turtles
+  percent-similar       ;; Avg % of same-color neighbors
+  percent-unhappy       ;; % of unhappy turtles
+  colors                ;; List of colors
 
-  inspected-turtle
+  inspected-turtle      ;; For the 'inspect' feature
 
-  global-avg-link-dist  ;; The average distance of ALL turtles to their friends
-  max-allowed-dist      ;; The current threshold distance (calculated from slider)
+  global-avg-link-dist  ;; Avg distance of ALL turtles to friends
+  max-allowed-dist      ;; Threshold distance
+
+  ;; --- NEW GLOBALS ---
+  turns                 ;; Counter for turns
+  user-turtle           ;; The specific agent you control
 ]
 
 turtles-own [
-  happy?              ;; is the turtle happy with its location?
-  similar-nearby      ;; how many neighboring patches have a turtle with my color?
-  other-nearby        ;; how many have a turtle of another color?
-  total-nearby        ;; how many neighboring patches have a turtle?
-  my-%-similar-wanted ;; the threshold for this particular turtle
+  ethnicity             ;; The group identity (logic)
+  happy?                ;; Is the turtle happy?
+  similar-nearby
+  other-nearby
+  total-nearby
+  my-%-similar-wanted
 
-  link-happy?         ;; Are my friends close enough?
-  avg-link-dist       ;; The average distance to my network friends
+  link-happy?
+  avg-link-dist
 ]
 
 to setup
   clear-all
-
+  set turns 0
   set inspected-turtle nobody
   set colors [red green yellow blue orange]
 
   ;; 1. GENERATE NETWORK (Social Structure)
-  ;; Create turtles and link them in a ring lattice (Watts-Strogatz)
   nw:generate-watts-strogatz turtles links number average-degree rewiring-prob
 
-  ;; 2. ASSIGN COLORS (Social Homophily)
-  ;; Sort colors so neighbors in the network (ID 1, ID 2) share the same color.
-  let color-pool []
+  ;; 2. ASSIGN ETHNICITIES (Social Homophily Logic)
+  let ethnicity-pool []
   repeat number [
-    set color-pool lput (item (random number-of-ethnicities) colors) color-pool
+    set ethnicity-pool lput (item (random number-of-ethnicities) colors) ethnicity-pool
   ]
-  set color-pool sort color-pool ;; <--- This sorting creates the network clustering
+  set ethnicity-pool sort ethnicity-pool
 
   let i 0
   foreach sort turtles [ t ->
     ask t [
-      set color item i color-pool
+      ;; Separate logic (ethnicity) from visuals (color)
+      set ethnicity item i ethnicity-pool
+      set color ethnicity 
+      
       set shape "circle"
       set my-%-similar-wanted random %-similar-wanted
     ]
     set i i + 1
   ]
 
-  ;; 3. RECOLOR LINKS
+  ;; 3. RECOLOR LINKS (And hide them by default)
   recolor-links
 
   ;; 4. SCATTER TURTLES (Physical Randomness)
-  ;; We create lists of turtles and patches and SHUFFLE them.
-  ;; This breaks the spatial correlation, ensuring the model starts with
-  ;; social clusters (links) that are physically scattered (high unhappiness).
   let turtle-list shuffle [self] of turtles
   let patch-list shuffle [self] of n-of count turtles patches
-
   (foreach turtle-list patch-list [ [t p] ->
     ask t [ move-to p ]
   ])
+
+  ;; --- 5. SETUP USER AGENT ---
+  ;; Pick a random turtle to be the user
+  set user-turtle one-of turtles
+  ask user-turtle [
+    set shape "person"
+    set size 2.5
+  ]
+  watch user-turtle
 
   update-turtles
   update-globals
@@ -72,80 +83,278 @@ to setup
 end
 
 to go
-  if all? turtles [happy?] [ stop ]
-  move-unhappy-turtles
-  update-turtles
-  update-globals
+  ifelse user-mode? [
+    ;; ============================================================
+    ;; MODE 1: USER AGENT (TURN-BASED WITH FOG OF WAR)
+    ;; ============================================================
 
-  manage-inspection
+    ;; 1. Apply Fog of War (Observer calls this safe version)
+    apply-fog-of-war
 
-  tick
-end
+    ;; 2. Handle User Interaction
+    ;; This logic handles both Happy and Unhappy states.
+    ;; It blocks execution until the user acts or acknowledges.
+    handle-user-turn
 
-to move-unhappy-turtles
-  ask turtles with [ not happy? ]
-    [ find-new-spot ]
-end
+    ;; 3. AI Turn (Others Move)
+    ;; Only move turtles that are NOT the user and are unhappy
+    ask turtles with [self != user-turtle and not happy?] [
+      find-new-spot
+    ]
 
-;; --- NEW: MODIFIED MOVEMENT LOGIC ---
-to find-new-spot
-  ;; 1. Identify valid spots around the turtle itself within the slider radius
-  let local-candidates patches in-radius movement-radius with [ not any? turtles-here ]
+    ;; 4. Updates
+    set turns turns + 1
+    update-turtles
+    update-globals
 
-  ;; 2. Identify valid spots around the turtle's network connections (link-neighbors)
-  ;; We use 'patch-set' to combine the patches surrounding all link-neighbors into one agentset
-  let network-candidates patch-set [ patches in-radius movement-radius ] of link-neighbors
+    ;; Re-apply Fog of War so the user sees the final state of the turn
+    apply-fog-of-war
+    
+    ;; Force the view to update so the user sees the result of the AI moves
+    display 
+    
+    if slow? [wait 0.5]
+    
+    ;; Advance the tick counter (useful for plots)
+    tick
+  ]
+  [
+    ;; ============================================================
+    ;; MODE 2: STANDARD SIMULATION (GOD VIEW)
+    ;; ============================================================
 
-  ;; Filter network candidates to ensure they are empty
-  set network-candidates network-candidates with [ not any? turtles-here ]
+    ;; 1. Restore Vision (In case we just switched from User Mode)
+    restore-vision
 
-  ;; 3. Combine both sets of candidates
-  let all-candidates (patch-set local-candidates network-candidates)
+    ;; 2. Standard Stop Condition
+    if all? turtles [happy?] [ stop ]
 
-  ;; 4. Move to one of them if available
-  ifelse any? all-candidates [
-    move-to one-of all-candidates
-  ] [
-    ;; Fallback: If no spots are found in the radius (overcrowding),
-    ;; the turtle stays put and waits for a spot to open up next tick.
-    ;; Alternatively, you can enable the line below to allow random jumps if stuck:
-    ; move-to one-of patches with [not any? turtles-here]
+    ;; 3. Move Everyone
+    move-unhappy-turtles
+
+    ;; 4. Updates
+    update-turtles
+    update-globals
+    manage-inspection
+    tick
   ]
 end
 
-to update-turtles
-  ;; Pre-calculate world size for the formula
-  ;; We use the world diagonal as the "Maximum Possible Distance"
-  let world-diagonal sqrt (world-width ^ 2 + world-height ^ 2)
+;; --- USER INTERACTION LOGIC ---
 
-  ;; Calculate the specific distance threshold based on the slider
-  ;; High % wanted = Low allowed distance
+to handle-user-turn
+  ;; We check happiness using 'of' so the Observer can read it
+  let is-unhappy? [not happy?] of user-turtle
+
+  ifelse is-unhappy? [
+    ;; --- CASE A: USER IS UNHAPPY ---
+    output-print (word "Turn " turns ": You are UNHAPPY. Click a patch to move or CLICK YOURSELF to skip.")
+    
+    ;; Make sure the user sees the message before the loop starts
+    display
+
+    ;; --- INTERACTION LOOP ---
+    ;; We use a loop to force the user to make a VALID move or SKIP.
+    ;; The loop will only break if a move is successful or skip is triggered.
+    let turn-done? false
+
+    while [not turn-done?] [
+      ;; Check Mouse Click
+      if mouse-down? [
+        let click-x mouse-xcor
+        let click-y mouse-ycor
+
+        ;; --- CHECK FOR SELF-CLICK (SKIP) ---
+        ;; Calculate distance from user turtle to the click
+        let dist-to-click [distancexy click-x click-y] of user-turtle
+
+        ifelse dist-to-click < 1 [
+          ;; SKIP TURN
+          set turn-done? true
+          output-print "Turn Skipped (User stayed put)."
+        ] [
+          ;; --- CHECK FOR MOVEMENT ---
+          let target patch click-x click-y
+
+          ;; 1. Define Valid Set: (My Radius + Friends Radius) AND Empty
+          let my-vision [ patches in-radius movement-radius ] of user-turtle
+          let friend-vision patch-set [ patches in-radius movement-radius ] of ([link-neighbors] of user-turtle)
+          let valid-patches (patch-set my-vision friend-vision) with [not any? turtles-here]
+
+          ;; 2. Check if target is in valid set
+          ifelse member? target valid-patches [
+             ask user-turtle [ move-to target ]
+             set turn-done? true
+             output-print "Move Successful."
+          ] [
+             user-message "Invalid Move! Click an EMPTY spot in range, or click YOURSELF to skip."
+          ]
+        ]
+
+        ;; Wait for mouse release to prevent double-processing
+        while [mouse-down?] [ ]
+      ]
+
+      ;; Small wait to keep interface responsive
+      wait 0.05
+    ]
+  ]
+  [
+    ;; --- CASE B: USER IS HAPPY ---
+    ;; If skip-turns? is true, we simply let the procedure finish without pause.
+    ;; If false, we pause via user-message.
+    ifelse skip-turns? [
+      output-print (word "Turn " turns ": User is happy. Auto-advancing.")
+    ] [
+      user-message (word "Turn " turns ": You are currently HAPPY!\n\nYou do not need to move.\nClick OK to let the other agents take their turn.")
+      output-print (word "Turn " turns ": User is happy. AI taking turn...")
+    ]
+  ]
+end
+
+;; --- VISIBILITY LOGIC ---
+to apply-fog-of-war
+  ;; If fog? is off, show the full map (God View) and exit
+  if not fog? [
+    restore-vision
+  ]
+
+  ;; --- 1. CALCULATE VISION (Observer Context) ---
+
+  ;; We use 'of user-turtle' to calculate the patches from the turtle's perspective
+  let my-vision [ patches in-radius movement-radius ] of user-turtle
+
+  ;; We get the friends' vision.
+  ;; Step A: Get the friends (agentset)
+  let my-friends [link-neighbors] of user-turtle
+
+  ;; Step B: Ask the friends for their patches.
+  ;; Note: 'of' with an agentset returns a LIST of agentsets.
+  ;; We use 'patch-set' to merge that list into one big agentset.
+  let friend-vision patch-set [ patches in-radius movement-radius ] of my-friends
+
+  ;; Combine them
+  let visible-area (patch-set my-vision friend-vision)
+
+  ;; --- 2. HIDE EVERYTHING ---
+  ask turtles [ set hidden? true ]
+  ask links [ set hidden? true ]
+  ask patches [ set pcolor black ]
+
+  ;; --- 3. REVEAL VISIBLE AREA ---
+
+  ;; Color the ground
+  ask visible-area [
+    set pcolor 3  ;; Dark Gray
+  ]
+
+  ;; Reveal turtles standing on the visible ground
+  ask turtles-on visible-area [
+    set hidden? false
+    ;; Reset to default appearance first (in case they were stars before)
+    if self != user-turtle [
+      set shape "circle"
+      set color ethnicity
+    ]
+  ]
+
+  ;; Reveal links only if toggle-links? is ON
+  if toggle-links? [
+    ask links [
+      ;; We check if both ends are currently visible
+      if ([hidden?] of end1 = false) and ([hidden?] of end2 = false) [
+        set hidden? false
+      ]
+    ]
+
+    ;; Color User links BLUE
+    ask [my-links] of user-turtle [
+      set color blue
+      set thickness 0.3
+      set hidden? false
+    ]
+  ]
+
+  ;; Always ensure the user is visible
+  ask user-turtle [ set hidden? false ]
+
+  ;; --- 4. HIGHLIGHT CONNECTIONS (User Specific Visuals) ---
+  
+  ;; Make user connections into YELLOW STARS
+  ;; These remain visible to indicate 'Friend' status even if links are hidden
+  ask [link-neighbors] of user-turtle [
+    set shape "star"
+    set color yellow
+    set size 1.5
+    set hidden? false ;; Ensure friends are visible even if slightly off-screen? (Optional, but safer to stick to fog rules)
+  ]
+end
+
+to restore-vision
+  ;; Resets the view to normal (God View)
+  ask turtles [
+    set hidden? false
+    ;; Reset shapes for everyone except the user (who stays as 'person')
+    if self != user-turtle [
+      set shape "circle"
+      set color ethnicity ;; Restore original ethnicity color (remove yellow)
+      set size 1
+    ]
+  ]
+  
+  ;; Respect the toggle-links? switch for God View as well
+  ifelse toggle-links? [
+    ask links [ show-link ]
+  ] [
+    ask links [ hide-link ]
+  ]
+  
+  ask patches [ set pcolor black ]
+end
+
+;; --- STANDARD MOVEMENT LOGIC ---
+to move-unhappy-turtles
+  ask turtles with [ not happy? ] [ find-new-spot ]
+end
+
+to find-new-spot
+  ;; 1. Local Candidates
+  let local-candidates patches in-radius movement-radius with [ not any? turtles-here ]
+
+  ;; 2. Network Candidates
+  let network-candidates patch-set [ patches in-radius movement-radius ] of link-neighbors
+  set network-candidates network-candidates with [ not any? turtles-here ]
+
+  ;; 3. Combine & Move
+  let all-candidates (patch-set local-candidates network-candidates)
+
+  if any? all-candidates [
+    move-to one-of all-candidates
+  ]
+end
+
+;; --- UPDATES & CALCULATIONS ---
+to update-turtles
+  let world-diagonal sqrt (world-width ^ 2 + world-height ^ 2)
   let allowed-dist world-diagonal * (1 - (%-closeness-wanted / 100))
 
   ask turtles [
-    ;; --- 1. SCHELLING (GRID) HAPPINESS ---
-    set similar-nearby count (turtles-on neighbors) with [color = [color] of myself]
+    ;; Schelling Happiness - NOW CHECKS ETHNICITY, NOT COLOR
+    set similar-nearby count (turtles-on neighbors) with [ethnicity = [ethnicity] of myself]
     set total-nearby count (turtles-on neighbors)
-    set other-nearby count (turtles-on neighbors) with [color != [color] of myself]
+    set other-nearby count (turtles-on neighbors) with [ethnicity != [ethnicity] of myself]
 
     let grid-happy? (similar-nearby >= ( my-%-similar-wanted * total-nearby / 100 ))
                       and (other-nearby >= ( %-different-wanted * total-nearby / 100 ))
 
-    ;; --- 2. NETWORK (LINK) HAPPINESS ---
-    ;; Check if I have friends. If no friends, I am "link-happy" by default.
+    ;; Network Happiness
     ifelse any? link-neighbors [
-      ;; Calculate average distance to all connected turtles
-      ;; Note: 'distance' automatically finds the shortest path in the torus
       set avg-link-dist mean [distance myself] of link-neighbors
-
-      ;; I am happy if my friends are closer than the allowed threshold
       set link-happy? (avg-link-dist <= allowed-dist)
     ] [
       set link-happy? true
     ]
 
-    ;; --- 3. TOTAL HAPPINESS ---
-    ;; Both conditions must be met to stop moving
     set happy? grid-happy? and link-happy?
   ]
 end
@@ -183,54 +392,14 @@ to update-globals
   ]
 end
 
-
-to toggle-links
-  ifelse any? links with [ not hidden? ] [
-    ask links [ hide-link ]
-  ] [
-    ask links [ show-link ]
-  ]
-  display ;; Forces the view to update immediately
-end
-
-
-to recolor-links
-  ask links [
-    ;; Check the color of the two turtles at the ends of the link
-    let c1 [color] of end1
-    let c2 [color] of end2
-
-    ifelse c1 = c2 [
-      ;; If same color, use that color
-      set color c1
-      ;; Optional: Make same-color links slightly thicker to see them better
-      set thickness 0
-    ] [
-      ;; If different, use gray
-      set color gray
-      set thickness 0  ;; default thickness
-    ]
-  ]
-end
-
-
 to manage-inspection
   ifelse inspect-switch [
-    ;; --- SWITCH IS ON ---
-
-    ;; 1. If we aren't watching anyone yet, pick a random turtle
     if inspected-turtle = nobody [
       set inspected-turtle one-of turtles
       watch inspected-turtle
     ]
-
-    ;; 2. Draw the visualization (Local & Network)
     draw-inspection
-
   ] [
-    ;; --- SWITCH IS OFF ---
-
-    ;; If we were watching someone, clear everything and stop
     if inspected-turtle != nobody [
       reset-inspection
     ]
@@ -238,27 +407,12 @@ to manage-inspection
 end
 
 to draw-inspection
-  ;; Clear the board first so we don't leave trails
   ask patches [ set pcolor black ]
-
   if inspected-turtle != nobody [
     ask inspected-turtle [
       set size 3
-      type "Avg Distance to Friends: " print precision avg-link-dist 2
-      ;; A. NETWORK RADIUS (Friends' Neighborhoods) -> LIGHT GREEN
-      ;; We draw this first so the local radius (Blue) draws on top if they overlap
-      ask link-neighbors [
-        ask patches in-radius movement-radius [
-          set pcolor lime ;; Light Green
-        ]
-      ]
-
-      ;; B. LOCAL RADIUS (My Neighborhood) -> LIGHT BLUE
-      ask patches in-radius movement-radius [
-        set pcolor sky  ;; Light Blue
-      ]
-
-      ;; C. SHOW LINKS
+      ask link-neighbors [ ask patches in-radius movement-radius [ set pcolor lime ] ]
+      ask patches in-radius movement-radius [ set pcolor sky ]
       ask my-links [ show-link set thickness 0.5 ]
     ]
   ]
@@ -266,10 +420,53 @@ end
 
 to reset-inspection
   set inspected-turtle nobody
-  reset-perspective        ;; Stops camera tracking
+  reset-perspective
   ask turtles [ set size 1 ]
   ask links [ hide-link ]
   ask patches [ set pcolor black ]
+end
+
+to recolor-links
+  ask links [
+    ;; Check the ETHNICITY of the two turtles at the ends of the link
+    let c1 [ethnicity] of end1
+    let c2 [ethnicity] of end2
+
+    ifelse c1 = c2 [
+      ;; If same ethnicity, use that color
+      set color c1
+      set thickness 0
+    ] [
+      ;; If different, use gray
+      set color gray
+      set thickness 0  ;; default thickness
+    ]
+    
+    ;; DEFAULT: Hide links
+    hide-link
+  ]
+end
+
+;; --- NEW REPORTERS FOR MONITORS ---
+
+to-report get-user-happiness
+  if user-turtle = nobody [ report "N/A" ]
+  ifelse [happy?] of user-turtle [ report "Happy" ] [ report "Unhappy" ]
+end
+
+to-report get-user-similarity
+  if user-turtle = nobody [ report 0 ]
+  let sim [similar-nearby] of user-turtle
+  let tot [total-nearby] of user-turtle
+  if tot = 0 [ report 0 ]
+  report (sim / tot) * 100
+end
+
+to-report get-user-link-dist
+  if user-turtle = nobody [ report 0 ]
+  ;; Check if user has links
+  if not [any? link-neighbors] of user-turtle [ report "No Links" ]
+  report [avg-link-dist] of user-turtle
 end]]></code>
   <widgets>
     <view x="273" wrappingAllowedX="true" y="10" frameRate="30.0" minPycor="-25" height="361" showTickCounter="true" patchSize="7.0" fontSize="10" wrappingAllowedY="true" width="361" tickCounterLabel="ticks" maxPycor="25" updateMode="1" maxPxcor="25" minPxcor="-25"></view>
@@ -297,11 +494,9 @@ end]]></code>
     <button x="124" y="14" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="80" display="go">go</button>
     <slider x="35" step="1" y="613" max="5" width="192" display="number-of-ethnicities" height="50" min="2" direction="Horizontal" default="2.0" variable="number-of-ethnicities"></slider>
     <slider x="15" step="1" y="174" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
-    <slider x="275" step="1" y="480" max="50" width="192" display="movement-radius" height="50" min="0" direction="Horizontal" default="4.0" variable="movement-radius"></slider>
-    <slider x="275" step="1" y="542" max="10" width="172" display="average-degree" height="50" min="0" direction="Horizontal" default="3.0" variable="average-degree"></slider>
-    <slider x="465" step="0.1" y="552" max="1" width="172" display="rewiring-prob" height="50" min="0" direction="Horizontal" default="0.4" variable="rewiring-prob"></slider>
-    <button x="500" y="485" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="122">toggle-links</button>
-    <switch x="620" y="415" height="40" on="false" variable="inspect-switch" width="177" display="inspect-switch"></switch>
+    <slider x="275" step="1" y="480" max="50" width="195" display="movement-radius" height="50" min="0" direction="Horizontal" default="4.0" variable="movement-radius"></slider>
+    <slider x="275" step="1" y="542" max="10" width="195" display="average-degree" height="50" min="0" direction="Horizontal" default="3.0" variable="average-degree"></slider>
+    <switch x="620" y="415" height="40" on="true" variable="inspect-switch" width="177" display="inspect-switch"></switch>
     <button x="210" y="15" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="55">go</button>
     <slider x="15" step="1" y="229" max="100" width="225" display="%-closeness-wanted" height="50" min="0" direction="Horizontal" default="78.0" variable="%-closeness-wanted" units="%"></slider>
     <plot x="665" autoPlotX="true" yMax="10.0" autoPlotY="true" yAxis="Distance" y="20" xMin="0.0" height="210" legend="false" xMax="10.0" yMin="0.0" width="295" xAxis="ticks" display="Network Distances">
@@ -316,6 +511,15 @@ end]]></code>
         <update>plot global-avg-link-dist</update>
       </pen>
     </plot>
+    <slider x="480" step="0.1" y="540" max="1" width="172" display="rewiring-prob" height="50" min="0" direction="Horizontal" default="0.4" variable="rewiring-prob"></slider>
+    <switch x="480" y="480" height="40" on="true" variable="toggle-links?" width="170" display="toggle-links?"></switch>
+    <switch x="665" y="235" height="40" on="true" variable="user-mode?" width="95" display="user-mode?"></switch>
+    <switch x="665" y="370" height="40" on="false" variable="slow?" width="95" display="slow?"></switch>
+    <switch x="665" y="325" height="40" on="true" variable="fog?" width="95" display="fog?"></switch>
+    <switch x="665" y="280" height="40" on="true" variable="skip-turns?" width="95" display="skip-turns?"></switch>
+    <monitor x="860" precision="17" y="240" height="60" fontSize="11" width="100">get-user-happiness</monitor>
+    <monitor x="860" precision="17" y="385" height="60" fontSize="11" width="100">round get-user-link-dist</monitor>
+    <monitor x="860" precision="17" y="310" height="60" fontSize="11" width="100">get-user-similarity</monitor>
   </widgets>
   <info><![CDATA[## ACKNOWLEDGMENT
 
