@@ -9,6 +9,7 @@ globals [
   
   road-dataset
   water-dataset
+  building-dataset
   
   ;; OPTIMIZATION: Cache the patches where turtles can live
   habitable-patches
@@ -16,7 +17,14 @@ globals [
 
 ;; LOGIC VARIABLE: Stores "True" if the patch is a road/water, 
 ;; independent of the visual pcolor.
-patches-own [ is-road? ]
+;; traffic records how many turtles traveled by that road patch.
+patches-own [ 
+  is-road? 
+  traffic 
+  is-building?
+  is-river?
+  saved-color
+]
 
 turtles-own [
   happy?
@@ -49,9 +57,14 @@ to setup
   draw-selected-scenario
   
   ;; 4. Cache Habitable Patches
-  ;; LOGIC FIX: We select patches that are NOT roads.
-  ;; This ensures turtles spawn only in safe areas, even if the road lines are thin vectors.
-  set habitable-patches patches with [not is-road?]
+  ;; If buildings exist in the real scenario, turtles live exclusively there.
+  ;; Otherwise, fallback to the default logic (anywhere but roads and rivers).
+  ifelse road-scenario = "real-norrkoping" and file-exists? "buildings.shp" [
+    set habitable-patches patches with [is-building? and not is-river?]
+  ]
+  [
+    set habitable-patches patches with [not is-road? and not is-river?]
+  ]
 
   ;; 5. Spawn Turtles based on Density
   let available-spots count habitable-patches
@@ -59,12 +72,16 @@ to setup
 
   ifelse target-population > 0 [
     ;; Only spawn on habitable patches
-    ask n-of target-population habitable-patches [
-      sprout 1 [
-        set color (item (random number-of-ethnicities) colors)
-        set shape "person"
-        set size 1.5
+    repeat 100 [
+      ask n-of (target-population / 100) habitable-patches [
+        sprout 1 [
+          set color (item (random number-of-ethnicities) colors)
+          set shape "person"
+          set size 1.5
+          set happy? false
+        ]
       ]
+      if slow-display? [display]
     ]
   ]
   [
@@ -91,16 +108,22 @@ to draw-selected-scenario
   ask patches [ 
     set pcolor black 
     set is-road? false ;; Default: Safe to walk
+    set is-building? false
+    set is-river? false
+    set traffic 0      ;; Reset traffic counter
+    set saved-color black
   ]
 
   (ifelse
     road-scenario = "empty" [
-      ;; Do nothing
+      ask patches [
+        set pcolor black
+      ]
     ]
 
     road-scenario = "grid" [
       ask patches [
-        if (pxcor mod 10 = 0) or (pycor mod 10 = 0) [ 
+        if (pxcor mod 8 = 0) or (pycor mod 8 = 0) [ 
           set pcolor brown 
           set is-road? true
         ]
@@ -109,9 +132,14 @@ to draw-selected-scenario
 
     road-scenario = "norrkoping" [
       ask patches [
-        if abs (pycor - ( 8 * sin (pxcor * 5) )) < 2 [ 
+        if (pxcor mod 12 = 0) or (pycor mod 12 = 0) [ 
           set pcolor brown 
           set is-road? true
+        ]
+        if abs (pycor - ( 8 * sin (pxcor * 5) )) < 2 [ 
+          set pcolor blue 
+          set is-road? false
+          set is-river? true
         ]
         if abs (pxcor + 5) < 1 [ 
           set pcolor brown 
@@ -122,30 +150,39 @@ to draw-selected-scenario
 
     road-scenario = "stockholm" [
       ask patches [
+
         let dist distancexy 0 0
         if dist > 8 and dist < 13 [ 
+          set pcolor blue 
+          set is-road? false
+          set is-river? true
+        ]
+
+        if (pxcor mod 10 = 0) or (pycor mod 10 = 0) [ 
           set pcolor brown 
           set is-road? true
-        ]
-        if (abs pxcor < 1) or (abs pycor < 1) [ 
-          set pcolor black 
-          set is-road? false
         ]
       ]
     ]
 
     road-scenario = "real-norrkoping" [
+      ask patches [set pcolor gray + 4]
       ;; A. Draw Waterways (Blue)
       ifelse ( file-exists? "waterways.shp" ) [
         set water-dataset gis:load-dataset "waterways.shp"
         gis:set-world-envelope (gis:envelope-of water-dataset)
         
-        ;; VISUAL: Draw vectors (sharp edges) - User approved
         gis:set-drawing-color blue
         gis:draw water-dataset 1
+        display
         
-        ;; LOGIC: Mark patches as blocked (invisible pcolor change, logical switch)
-        load-gis-logic water-dataset
+        foreach gis:feature-list-of water-dataset [ feature ->
+          ask patches gis:intersecting feature [ 
+            set is-river? true
+            set is-road? false
+            set pcolor blue
+          ]
+        ]
       ]
       [ 
         ;; Ignore if missing
@@ -156,31 +193,44 @@ to draw-selected-scenario
         set road-dataset gis:load-dataset "roads.shp"
         gis:set-world-envelope (gis:envelope-of road-dataset)
         
-        ;; VISUAL: Draw vectors (sharp edges) - User approved
         gis:set-drawing-color brown
         gis:draw road-dataset 1
-        
-        ;; LOGIC: Mark patches as blocked
-        ;; This step is slow but NECESSARY for the model to work correctly.
+        display
         load-gis-logic road-dataset
       ]
       [
         user-message "roads.shp missing. Please add the file."
       ]
+
+      ;; C. Draw Buildings (Orange)
+      ifelse ( file-exists? "buildings.shp" ) [
+        set building-dataset gis:load-dataset "buildings.shp"
+        gis:set-world-envelope (gis:envelope-of building-dataset)
+        
+        gis:set-drawing-color orange
+        gis:fill building-dataset 1.0
+        display
+        
+        foreach gis:feature-list-of building-dataset [ feature ->
+          ask patches gis:intersecting feature [ 
+            set is-building? true
+            set pcolor orange
+          ]
+        ]
+      ]
+      [
+        ;; Ignore if missing
+      ]
     ]
   )
 end
 
-;; Safe Logic Loader
 to load-gis-logic [ dataset ]
-  ;; We iterate through the features to mark the underlying patches.
-  ;; This ensures turtles know where the lines are.
   foreach gis:feature-list-of dataset [ feature ->
     ask patches gis:intersecting feature [ 
-      set is-road? true
-      ;; OPTIONAL: You can set pcolor to brown here if you want to see the "blocky" logic.
-      ;; If you leave it black, you only see the nice vector lines, which looks better.
-      ;; set pcolor brown 
+      if not is-river? [
+        set is-road? true
+      ]
     ]
   ]
 end
@@ -208,7 +258,6 @@ to update-turtles
   ]
 end
 
-;; --- RAY CASTING (OPTIMIZED) ---
 to-report has-line-of-sight? [ target ]
   let dist distance target
   if dist = 0 [ report true ]
@@ -220,8 +269,12 @@ to-report has-line-of-sight? [ target ]
   while [current-dist < dist] [
     let p patch-at-heading-and-distance ang current-dist
     
+    ;; Rivers explicitly block vision
+    if p != nobody and [is-river?] of p [
+      report false
+    ]
+    
     ;; OPTIMIZATION: Check against the cached habitable-set
-    ;; This now checks [not is-road?] implicitly
     if not member? p habitable-patches [
       report false 
     ]
@@ -231,37 +284,139 @@ to-report has-line-of-sight? [ target ]
   report true
 end
 
-;; --- MOVEMENT (OPTIMIZED) ---
+;; --- MOVEMENT (RADIUS & ROAD AWARE) ---
 
 to move-unhappy-turtles
-  ask turtles with [ not happy? ]
-    [ find-new-spot ]
+  ifelse slow-display? [
+    let sad-turtles [self] of turtles with [ not happy? ]
+    let total-sad length sad-turtles
+    
+    if total-sad > 0 [
+      let batches 100
+      let batch-size ceiling (total-sad / batches)
+      
+      let i 0
+      while [i < total-sad] [
+        let end-index i + batch-size
+        if end-index > total-sad [ set end-index total-sad ]
+        
+        let current-batch sublist sad-turtles i end-index
+        ask turtle-set current-batch [ find-new-spot ]
+        
+        display
+        set i end-index
+      ]
+    ]
+  ] 
+  [
+    ask turtles with [ not happy? ] [ find-new-spot ]
+  ]
+end
+
+;; Helper reporter: Extracts the actual patches intersected on a straight line
+to-report get-path-patches [ target ]
+  let dist distance target
+  if dist = 0 [ report patch-set patch-here ]
+  let ang towards target
+  let step 0.5 ;; Finer resolution to guarantee no missed road patches
+  let current-dist step
+  let p-set (patch-set patch-here)
+  
+  while [current-dist <= dist] [
+    let p patch-at-heading-and-distance ang current-dist
+    if p != nobody [
+      set p-set (patch-set p-set p)
+    ]
+    set current-dist current-dist + step
+  ]
+  report p-set
 end
 
 to find-new-spot
-  ;; Rejection Sampling using the habitable-patches cache
-  let target nobody
-  let tries 0
+  let max-search-radius travel-distance
   
-  while [target = nobody and tries < 10] [
-    let potential-spot one-of habitable-patches
-    
-    if not any? turtles-on potential-spot [
-      set target potential-spot
-    ]
-    set tries tries + 1
+  ;; Check if there are any road patches within normal travel distance.
+  ;; If not, the turtle cannot use the road-multiplier to extend its reach.
+  if any? patches in-radius travel-distance with [is-road?] [
+    set max-search-radius (travel-distance * road-multiplier)
   ]
   
-  if target != nobody [ move-to target ]
+  ;; Consider all empty habitable patches within the determined radius
+  let candidates habitable-patches in-radius max-search-radius with [not any? turtles-on self]
+  
+  if not any? candidates [ stop ]
+  
+  let target nobody
+  
+  ifelse real-travel? [
+    ;; EXACT MODE (SLOWER): Filter all candidates using the is-reachable helper
+    let reachable-candidates candidates with [ is-reachable? myself self ]
+    
+    ;; Pick one randomly from the valid set
+    if any? reachable-candidates [
+      set target one-of reachable-candidates
+    ]
+  ]
+  [
+    ;; OPTIMIZED MODE (FASTER): Rejection sampling. Randomly test up to 20 spots.
+    let tries 0
+    while [target = nobody and tries < 20] [
+      let potential-spot one-of candidates
+      if is-reachable? self potential-spot [
+        set target potential-spot
+      ]
+      set tries tries + 1
+    ]
+  ]
+  
+  ;; Move and record traffic
+  if target != nobody [
+    ;; Calculate final path to record actual traffic
+    let final-path get-path-patches target
+    ask final-path with [is-road?] [
+      set traffic traffic + 1
+    ]
+    
+    move-to target
+  ]
 end
 
-;; --- DRAWING TOOLS ---
+to-report is-reachable? [ turtle-agent patch-agent ]
+  let actual-dist [distance patch-agent] of turtle-agent
+  let p-set [get-path-patches patch-agent] of turtle-agent
+  let total-p count p-set
+  
+  if total-p = 0 [ report false ]
+  
+  ;; Rivers block mobility completely
+  if any? p-set with [is-river?] [
+    report false
+  ]
+  
+  ;; Automatically reachable if within base travel budget
+  if actual-dist <= travel-distance [
+    report true
+  ]
+  
+  ;; For patches further away, check if roads make them reachable
+  let road-p count p-set with [is-road?]
+  let f (road-p / total-p)
+  
+  ;; Roads cost 1/road-multiplier, normal patches cost 1
+  let effective-cost actual-dist * ( (1 - f) + (f / road-multiplier) )
+  
+  report effective-cost <= travel-distance
+end
+
+;; --- DRAWING TOOLS & VIZ ---
 
 to draw-roads
     if mouse-down? [
       ask patch mouse-xcor mouse-ycor [
         set pcolor brown
-        set is-road? true ;; Sync logic
+        set is-road? true
+        set is-river? false
+        set traffic 0
         ask turtles-here [ find-new-spot ]
       ]
       display
@@ -273,11 +428,93 @@ to gentrify-roads
       ask patch mouse-xcor mouse-ycor [
         if pcolor = brown or is-road? [ 
            set pcolor black 
-           set is-road? false ;; Sync logic
+           set is-road? false 
+           set traffic 0
         ]
       ]
       display
     ]
+end
+
+to draw-rivers
+    if mouse-down? [
+      ask patch mouse-xcor mouse-ycor [
+        set pcolor blue
+        set is-river? true
+        set is-road? false
+        ask turtles-here [ move-to one-of habitable-patches ]
+      ]
+      display
+    ]
+end
+
+to erase-rivers
+    if mouse-down? [
+      ask patch mouse-xcor mouse-ycor [
+        if pcolor = blue or is-river? [ 
+           set pcolor black 
+           set is-river? false 
+        ]
+      ]
+      display
+    ]
+end
+
+to visualize-traffic
+  ;; Check if traffic is currently being visualized (roads are not brown)
+  if any? patches with [is-road? and pcolor != brown] [
+    ;; Toggle off: Reset roads to default color
+    ask patches with [is-road?] [ set pcolor brown ]
+    display
+    stop
+  ]
+
+  let max-t max [traffic] of patches with [is-road?]
+  if max-t = 0 [ 
+    user-message "No traffic recorded yet. Let the model run!"
+    stop 
+  ]
+  
+  ask patches with [is-road?] [
+    ;; scale-color arguments: color value range-max range-min
+    ;; This applies a gradient where high traffic turns brighter (red/pink) and low traffic stays dark red.
+    set pcolor scale-color red traffic max-t 0
+  ]
+  display
+end
+
+to visualize-mobility
+  if not mouse-down? [
+    
+  ]
+
+  let target min-one-of turtles [distancexy mouse-xcor mouse-ycor]
+  if target != nobody [
+    ;; Save current map visuals
+    ask patches [ set saved-color pcolor ]
+    
+    ask target [
+      let max-search-radius travel-distance
+      if any? patches in-radius travel-distance with [is-road?] [
+        set max-search-radius (travel-distance * road-multiplier)
+      ]
+      
+      let candidates patches in-radius max-search-radius with [not any? turtles-on self]
+      let reachable-candidates candidates with [ is-reachable? myself self ]
+      
+      ask reachable-candidates [ 
+        set pcolor green 
+        if is-road? [ set pcolor yellow ]
+      ]
+    ]
+    
+    ;; Hold frame until mouse releases
+    while [mouse-down?] [ display ]
+    
+    ;; Restore map visuals
+    ask patches [ set pcolor saved-color ]
+    display
+  ]
 end
 
 ;; --- GLOBALS ---
@@ -293,8 +530,6 @@ to update-globals
   set percent-unhappy (count turtles with [not happy?]) / (count turtles) * 100
 end
 
-;; --- VIZ ---
-
 to show-vision-for-turtle
   if not mouse-down? [
     ask rays [ die ]
@@ -308,7 +543,6 @@ to show-vision-for-turtle
         ask my-rays [ die ]
         let candidates other turtles in-radius vision-radius
         
-        ;; Draw visible rays
         ask candidates [
           let visible? [has-line-of-sight? myself] of myself
           if visible? [
@@ -325,7 +559,7 @@ to show-vision-for-turtle
   ]
 end]]></code>
   <widgets>
-    <view x="280" wrappingAllowedX="true" y="15" frameRate="30.0" minPycor="0" height="389" showTickCounter="true" patchSize="2.0" fontSize="10" wrappingAllowedY="true" width="965" tickCounterLabel="ticks" maxPycor="200" updateMode="1" maxPxcor="500" minPxcor="0"></view>
+    <view x="280" wrappingAllowedX="true" y="15" frameRate="30.0" minPycor="-25" height="392" showTickCounter="true" patchSize="8.0" fontSize="10" wrappingAllowedY="true" width="392" tickCounterLabel="ticks" maxPycor="25" updateMode="1" maxPxcor="25" minPxcor="-25"></view>
     <plot x="10" autoPlotX="true" yMax="100.0" autoPlotY="true" yAxis="%" y="238" xMin="0.0" height="175" legend="false" xMax="25.0" yMin="0.0" width="249" xAxis="time" display="Percent Similar">
       <setup></setup>
       <update></update>
@@ -342,20 +576,20 @@ end]]></code>
         <update>plot percent-unhappy</update>
       </pen>
     </plot>
-    <slider x="15" step="1" y="62" max="100" width="225" display="density-percent" height="50" min="0" direction="Horizontal" default="17.0" variable="density-percent" units="%"></slider>
-    <slider x="15" step="1.0" y="119" max="100.0" width="225" display="%-similar-wanted" height="50" min="0.0" direction="Horizontal" default="42.0" variable="%-similar-wanted" units="%"></slider>
+    <slider x="15" step="1" y="62" max="100" width="225" display="density-percent" height="50" min="0" direction="Horizontal" default="63.0" variable="density-percent" units="%"></slider>
+    <slider x="15" step="1.0" y="119" max="100.0" width="225" display="%-similar-wanted" height="50" min="0.0" direction="Horizontal" default="54.0" variable="%-similar-wanted" units="%"></slider>
     <button x="34" y="14" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="80" display="setup">setup</button>
     <button x="124" y="14" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="80" display="go">go</button>
     <slider x="35" step="1" y="605" max="5" width="192" display="number-of-ethnicities" height="50" min="2" direction="Horizontal" default="2.0" variable="number-of-ethnicities"></slider>
     <slider x="15" step="1" y="176" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
     <monitor x="270" precision="1" y="455" height="60" fontSize="11" width="108" display="Percent Similar">percent-similar</monitor>
     <monitor x="429" precision="1" y="455" height="60" fontSize="11" width="113" display="Percent Unhappy">percent-unhappy</monitor>
-    <slider x="270" step="1" y="530" max="20" width="172" display="vision-radius" height="50" min="0" direction="Horizontal" default="6.0" variable="vision-radius"></slider>
+    <slider x="270" step="1" y="530" max="20" width="172" display="vision-radius" height="50" min="1" direction="Horizontal" default="2.0" variable="vision-radius"></slider>
     <button x="439" y="530" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="92">draw-roads</button>
     <button x="438" y="575" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="95">gentrify-roads</button>
     <slider x="555" step="0.1" y="515" max="1" width="187" display="utility-threshold" height="50" min="0" direction="Horizontal" default="0.4" variable="utility-threshold"></slider>
     <slider x="555" step="0.1" y="577" max="1" width="172" display="beta-visible" height="50" min="0" direction="Horizontal" default="1.0" variable="beta-visible"></slider>
-    <chooser x="740" y="565" height="60" variable="road-scenario" current="4" width="137" display="road-scenario">
+    <chooser x="740" y="565" height="60" variable="road-scenario" current="1" width="137" display="road-scenario">
       <choice type="string" value="empty"></choice>
       <choice type="string" value="grid"></choice>
       <choice type="string" value="norrkoping"></choice>
@@ -363,6 +597,14 @@ end]]></code>
       <choice type="string" value="real-norrkoping"></choice>
     </chooser>
     <button x="560" y="455" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="150">show-vision-for-turtle</button>
+    <switch x="750" y="460" height="40" on="false" variable="slow-display?" width="101" display="slow-display?"></switch>
+    <slider x="995" step="1" y="415" max="15" width="250" display="travel-distance" height="50" min="1" direction="Horizontal" default="3.0" variable="travel-distance"></slider>
+    <slider x="1000" step="1" y="475" max="10" width="250" display="road-multiplier" height="50" min="0" direction="Horizontal" default="2.0" variable="road-multiplier"></slider>
+    <button x="1000" y="540" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="95">visualize-traffic</button>
+    <switch x="1110" y="540" height="40" on="false" variable="real-travel?" width="90" display="real-travel?"></switch>
+    <button x="1000" y="590" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="130">visualize-mobility</button>
+    <button x="435" y="630" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="95">draw-rivers</button>
+    <button x="535" y="630" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="95">erase-rivers</button>
   </widgets>
   <info><![CDATA[## ACKNOWLEDGMENT
 
