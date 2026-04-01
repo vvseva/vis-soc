@@ -1,0 +1,85 @@
+
+<experiments>
+  <experiment name="experiment test" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metrics>
+      <metric>index-exposure</metric>
+      <metric>index-dissimilarity</metric>
+      <metric>index-clustering</metric>
+      <metric>index-centrality</metric>
+      <metric>index-concentration</metric>
+    </metrics>
+    <constants>
+      <enumeratedValueSet variable="utility-threshold">
+        <value value="0.1"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="random-seed?">
+        <value value="false"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="park-catchment-distance">
+        <value value="10"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="beta1-neighbors">
+        <value value="0.1"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="%-different-wanted">
+        <value value="0"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="%-similar-wanted">
+        <value value="30"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="beta5-park-group">
+        <value value="0.1"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="beta2-venue-group">
+        <value value="0.1"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="road-multiplier">
+        <value value="1"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="venue-catchment-distance">
+        <value value="11"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="parks-number">
+        <value value="1"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="travel-distance">
+        <value value="9"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="number-of-ethnicities">
+        <value value="2"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="neighborhood-distance">
+        <value value="2"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="real-travel?">
+        <value value="false"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="venue-exclusivity">
+        <value value="1"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="visual-mode">
+        <value value="&quot;abstract&quot;"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="road-scenario">
+        <value value="&quot;stockholm&quot;"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="venues-number">
+        <value value="4"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="beta3-venue-loc">
+        <value value="0.1"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="density-percent">
+        <value value="71"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="beta4-home-venues">
+        <value value="0.1"></value>
+      </enumeratedValueSet>
+      <enumeratedValueSet variable="new-venue-color">
+        <value value="15"></value>
+      </enumeratedValueSet>
+    </constants>
+  </experiment>
+</experiments>

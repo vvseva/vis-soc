@@ -1,0 +1,107 @@
+---
+title: "experiments"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(logolink)
+```
+
+```{r}
+model_path <- file.path("netlogo", "roads", "Segregation Utility.nlogox")
+model_path <- "C:/Users/vsesu60/OneDrive - Linköpings universitet/Documents/R/vis-soc/netlogo/roads/Segregation Utility.nlogox"
+```
+
+```{r}
+setup_file <- create_experiment(
+  name = "Venue Segragation Model Analysis",
+  repetitions = 1,
+  run_metrics_every_step = TRUE,
+  setup = "setup",
+  go = "go",
+  time_limit = 300,
+  metrics = c(
+  'index-exposure',
+  'index-dissimilarity',
+  'index-clustering',
+  'index-centrality',
+  'index-concentration'
+  ),
+  constants = list(
+    "density-percent" = c(70),
+    "%-similar-wanted" = 30,
+    "number-of-ethnicities" = 2,
+    "%-different-wanted" = 0,
+    "neighborhood-distance" = 2,
+    "venues-number" = 4,
+    "venue-catchment-distance" = 10,
+    "venue-exclusivity" = 1,
+    "utility-threshold" = 0.1,
+    "beta1-neighbors" = c(0, 0.1, 0.5, 1),
+    "beta2-venue-group" = 0.5,
+    "beta3-venue-loc" = 0,
+    "beta4-home-venues" = 0,
+    "road-scenario" = 'empty',
+    "parks-number" = 3,
+    "park-catchment-distance" = 2,
+    "beta5-park-group" = 0.25,
+    "travel-distance" = 5,
+    "road-multiplier" = 1,
+    "real-travel?" = F,
+    "random-seed?" = F
+  )
+)
+
+
+```
+
+```{r}
+setup_file |> inspect_experiment()
+```
+
+
+```{r}
+results <-
+  model_path |>
+  run_experiment(
+    setup_file = setup_file,
+    output = "table"
+  )
+```
+
+```{r}
+results |> glimpse()
+```
+
+```{r}
+library(magrittr)
+data <-
+  results |>
+  extract2("table") 
+```
+
+
+```{r}
+data |> 
+  filter(step <= 100) |> 
+  select(
+    run_number,
+    step,
+    starts_with("index_"),
+    beta1_neighbors         
+  ) |>
+  pivot_longer(
+    cols = starts_with("index_"),
+    names_to = "index",
+    values_to = "value"
+  ) |>
+  ggplot(aes(x = step, y = value, color = index)) +
+  geom_line() +
+  facet_wrap(~ beta1_neighbors ) +
+  labs(title = "Segregation Indices Over Time", x = "Step", 
+       y = "Index Value", color = "Index") +
+  theme_minimal()
+       
+```
+
