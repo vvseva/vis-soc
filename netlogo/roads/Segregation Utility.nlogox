@@ -550,25 +550,25 @@ to calculate-segregation-dimensions
   ;; 4. CENTRALITY (Relative Centralization Index, RCI)
   ;; Sorts the established tracts by distance to the city center point (0,0)
   ;; and computes the cumulative spatial distribution curve between the two groups.
-  let sorted-tracts sort-by [ [t1 t2] -> [distancexy 0 0] of t1 < [distancexy 0 0] of t2 ] tracts
-  let cum-X 0
-  let cum-Y 0
-  let rci-sum 0
+;   let sorted-tracts sort-by [ [t1 t2] -> [distancexy 0 0] of t1 < [distancexy 0 0] of t2 ] tracts
+;   let cum-X 0
+;   let cum-Y 0
+;   let rci-sum 0
   
-  foreach sorted-tracts [ t ->
-    let local-fam [families in-radius 5] of t
-    let p-x (count local-fam with [color = gx-color]) / pop-x
-    let p-y (count local-fam with [color != gx-color]) / pop-y
+;   foreach sorted-tracts [ t ->
+;     let local-fam [families in-radius 5] of t
+;     let p-x (count local-fam with [color = gx-color]) / pop-x
+;     let p-y (count local-fam with [color != gx-color]) / pop-y
     
-    let prev-cum-X cum-X
-    let prev-cum-Y cum-Y
+;     let prev-cum-X cum-X
+;     let prev-cum-Y cum-Y
     
-    set cum-X cum-X + p-x
-    set cum-Y cum-Y + p-y
+;     set cum-X cum-X + p-x
+;     set cum-Y cum-Y + p-y
     
-    set rci-sum rci-sum + (prev-cum-X * cum-Y) - (cum-X * prev-cum-Y)
-  ]
-  set index-centrality rci-sum
+;     set rci-sum rci-sum + (prev-cum-X * cum-Y) - (cum-X * prev-cum-Y)
+;   ]
+;   set index-centrality rci-sum
   
   ;; 5. CLUSTERING (Spatial Proximity Index, SP)
   ;; Exhaustive O(N^2) evaluation for exponential distance decay is computationally crushing. 
@@ -748,7 +748,7 @@ end]]></code>
     <button x="124" y="14" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="80" display="go">go</button>
     <slider x="35" step="1" y="605" max="5" width="192" display="number-of-ethnicities" height="50" min="2" direction="Horizontal" default="2.0" variable="number-of-ethnicities"></slider>
     <slider x="15" step="1" y="176" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
-    <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="2.0" variable="neighborhood-distance"></slider>
+    <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="10.0" variable="neighborhood-distance"></slider>
     <slider x="815" step="1" y="15" max="10" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="4.0" variable="venues-number"></slider>
     <slider x="815" step="1" y="103" max="20" width="173" display="venue-catchment-distance" height="50" min="0" direction="Horizontal" default="11.0" variable="venue-catchment-distance"></slider>
     <slider x="815" step="0.1" y="178" max="1" width="222" display="venue-exclusivity" height="50" min="0.0" direction="Horizontal" default="1.0" variable="venue-exclusivity"></slider>
@@ -786,7 +786,7 @@ plotxy utility-threshold plot-y-max</update>
     </chooser>
     <monitor x="420" precision="1" y="535" height="60" fontSize="11" width="113" display="Percent Unhappy">percent-unhappy</monitor>
     <monitor x="294" precision="1" y="535" height="60" fontSize="11" width="108" display="Percent Similar">percent-similar</monitor>
-    <chooser x="480" y="670" height="60" variable="road-scenario" current="4" width="250" display="road-scenario">
+    <chooser x="480" y="670" height="60" variable="road-scenario" current="1" width="250" display="road-scenario">
       <choice type="string" value="real-norrkoping"></choice>
       <choice type="string" value="empty"></choice>
       <choice type="string" value="grid"></choice>

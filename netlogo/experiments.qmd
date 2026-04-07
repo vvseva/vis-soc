@@ -16,11 +16,11 @@ model_path <- "C:/Users/vsesu60/OneDrive - Linköpings universitet/Documents/R/v
 ```{r}
 setup_file <- create_experiment(
   name = "Venue Segragation Model Analysis",
-  repetitions = 1,
+  repetitions = 10,
   run_metrics_every_step = TRUE,
   setup = "setup",
   go = "go",
-  time_limit = 300,
+  time_limit = 200,
   metrics = c(
   'index-exposure',
   'index-dissimilarity',
@@ -33,12 +33,12 @@ setup_file <- create_experiment(
     "%-similar-wanted" = 30,
     "number-of-ethnicities" = 2,
     "%-different-wanted" = 0,
-    "neighborhood-distance" = 2,
-    "venues-number" = 4,
-    "venue-catchment-distance" = 10,
+    "neighborhood-distance" = c(2),
+    "venues-number" = c(5),
+    "venue-catchment-distance" = c(1, 3, 10, 15),
     "venue-exclusivity" = 1,
     "utility-threshold" = 0.1,
-    "beta1-neighbors" = c(0, 0.1, 0.5, 1),
+    "beta1-neighbors" = c(0.5),
     "beta2-venue-group" = 0.5,
     "beta3-venue-loc" = 0,
     "beta4-home-venues" = 0,
@@ -82,26 +82,49 @@ data <-
 ```
 
 
+### Segregation Indices Over Time by Neighborhood Distance
+
 ```{r}
 data |> 
-  filter(step <= 100) |> 
+  filter(step <= 200) |> 
   select(
     run_number,
     step,
     starts_with("index_"),
-    beta1_neighbors         
-  ) |>
+    venue_catchment_distance         
+  ) |> 
   pivot_longer(
     cols = starts_with("index_"),
     names_to = "index",
     values_to = "value"
-  ) |>
-  ggplot(aes(x = step, y = value, color = index)) +
-  geom_line() +
-  facet_wrap(~ beta1_neighbors ) +
-  labs(title = "Segregation Indices Over Time", x = "Step", 
+  ) |> 
+  filter(index %in% c("index_exposure", "index_dissimilarity", 
+                      "index_clustering")) |>
+  mutate(grouping_combo_run = str_c(run_number, index, venue_catchment_distance),
+         grouping_combo_condition = str_c(index, venue_catchment_distance)) |> 
+  ggplot(aes(x = step, y = value, color = index, group = grouping_combo_run)) +
+  geom_line(alpha = 0.25)+
+  facet_wrap(~ venue_catchment_distance)+
+  geomtextpath::geom_textpath(
+    aes(group = grouping_combo_condition, color = index, label = index), 
+    offset = unit(5, "pt"), gap = T, text_smoothing = 100)+
+  labs(title = "Segregation Indices Over Time (venue_catchment_distance)", x = "Step", 
        y = "Index Value", color = "Index") +
-  theme_minimal()
+  theme_minimal()+
+  theme(legend.position = "none")
        
+```
+
+
+### function
+
+```{r}
+
+input_to_vis <- function(model_path, constrain, values = c()){
+  # function takes the model path
+  # the name of the constraint to be varied and a vector of values for that constraint
+  # it creates an experiment file and runs the experiment, returning the results as a graph
+  
+}
 ```
 
