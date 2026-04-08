@@ -16,7 +16,7 @@ model_path <- "C:/Users/vsesu60/OneDrive - Linköpings universitet/Documents/R/v
 ```{r}
 setup_file <- create_experiment(
   name = "Venue Segragation Model Analysis",
-  repetitions = 10,
+  repetitions = 2,
   run_metrics_every_step = TRUE,
   setup = "setup",
   go = "go",
@@ -66,7 +66,7 @@ results <-
   model_path |>
   run_experiment(
     setup_file = setup_file,
-    output = "table"
+    output = c("table", "lists")
   )
 ```
 
@@ -126,5 +126,93 @@ input_to_vis <- function(model_path, constrain, values = c()){
   # it creates an experiment file and runs the experiment, returning the results as a graph
   
 }
+```
+
+
+
+```{r}
+model_path <-
+  find_netlogo_home() |>
+  file.path(
+    "models",
+    "IABM Textbook",
+    "chapter 4",
+    "Wolf Sheep Simple 5.nlogox"
+  )
+
+setup_file <- create_experiment(
+  name = "Wolf Sheep Simple Model Analysis",
+  setup = "setup",
+  go = "go",
+  time_limit = 500,
+  run_metrics_condition = 'ticks mod 100 = 0',
+  metrics = c(
+    '[xcor] of sheep',
+    '[ycor] of sheep',
+    '[xcor] of wolves',
+    '[ycor] of wolves',
+    '[pxcor] of patches',
+    '[pycor] of patches',
+    '[pcolor] of patches'
+  ),
+  constants = list(
+    "number-of-sheep" = 100,
+    "number-of-wolves" = 15,
+    "movement-cost" = 0.5,
+    "grass-regrowth-rate" = 0.3,
+    "energy-gain-from-grass" = 2,
+    "energy-gain-from-sheep" = 5
+  )
+)
+```
+
+```{r}
+create_experiment_template(model_path, insert_at_cursor = TRUE)
+
+setup_file <- create_experiment(
+  name = "Auto-Generated Analysis",
+  repetitions = 1,
+  run_metrics_every_step = TRUE,
+  setup = "setup",
+  go = "go",
+  time_limit = 200,
+  metrics = c(
+    "percent-similar",
+    "percent-unhappy",
+    "index-exposure",
+    "index-dissimilarity",
+    "index-clustering",
+    "index-centrality",
+    "index-concentration",
+    "[pxcor] of patches",
+    "[pycor] of patches",
+    "[pcolor] of patches"
+  ),
+  constants = list(
+    "density-percent" = c(71.0),
+    "%-similar-wanted" = c(30.0),
+    "number-of-ethnicities" = c(2.0),
+    "%-different-wanted" = c(0.0),
+    "neighborhood-distance" = c(1.0),
+    "venues-number" = c(4.0),
+    "venue-catchment-distance" = c(11.0),
+    "venue-exclusivity" = c(1.0),
+    "utility-threshold" = c(0.1),
+    "beta1-neighbors" = c(0.1),
+    "beta2-venue-group" = c(0.1),
+    "beta3-venue-loc" = c(0.1),
+    "beta4-home-venues" = c(0.1),
+    "parks-number" = c(1.0),
+    "park-catchment-distance" = c(10.0),
+    "beta5-park-group" = c(0.1),
+    "travel-distance" = c(9.0),
+    "road-multiplier" = c(1.0),
+    "real-travel?" = c(FALSE),
+    "random-seed?" = c(FALSE),
+    "new-venue-color" = c(15.0),
+    "visual-mode" = c("abstract"),
+    "road-scenario" = c("empty")
+  )
+)
 ```
 

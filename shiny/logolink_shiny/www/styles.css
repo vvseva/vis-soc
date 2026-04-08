@@ -1,0 +1,122 @@
+/* Apple System 1 (Macintosh 1984) Styling */
+
+/* Importing Chicago-like font for the vintage feel */
+@import url('https://fonts.cdnfonts.com/css/chicago');
+
+body {
+  /* 50% dither pattern background to simulate early Mac desktop */
+  background-color: #ffffff;
+  background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAABZJREFUeNpi2rVq1X8GBgYQwgcsAAgwAA/YAwS30oV5AAAAAElFTkSuQmCC'); 
+  font-family: 'Courier New', Courier, monospace !important;
+  color: #000000;
+}
+
+.container-fluid {
+  background-color: #ffffff;
+  border: 2px solid #000000;
+  margin-top: 30px;
+  padding: 25px;
+  box-shadow: 6px 6px 0px #000000;
+  max-width: 1400px;
+}
+
+h2, h4 {
+  font-family: 'Courier New', Courier, monospace !important;
+  border-bottom: 2px solid #000000;
+  padding-bottom: 8px;
+  text-transform: uppercase;
+  font-size: 1.25rem;
+  letter-spacing: 1px;
+}
+
+/* Panels */
+.well, .sidebar-panel, .plot-container, .control-section {
+  background-color: #ffffff !important;
+  border: 2px solid #000000 !important;
+  border-radius: 0 !important;
+  box-shadow: 3px 3px 0px #000000;
+  margin-bottom: 25px;
+  padding: 20px;
+}
+
+/* Buttons */
+.btn, .sys1-btn {
+  background-color: #ffffff;
+  color: #000000;
+  border: 2px solid #000000;
+  border-radius: 0;
+  box-shadow: 2px 2px 0px #000000;
+  font-family: 'Chicago', 'Courier New', Courier, monospace;
+  text-transform: uppercase;
+  font-size: 14px;
+  padding: 10px 15px;
+  transition: none;
+}
+
+.btn:hover, .btn:active, .sys1-btn:active {
+  background-color: #000000;
+  color: #ffffff;
+  box-shadow: inset 2px 2px 0px rgba(255, 255, 255, 0.4);
+  transform: translate(1px, 1px);
+}
+
+/* Form Inputs */
+input[type="text"], input[type="number"], select, .form-control {
+  border: 2px solid #000000 !important;
+  border-radius: 0 !important;
+  font-family: 'Courier New', Courier, monospace !important;
+  background-color: #ffffff !important;
+  color: #000000 !important;
+  box-shadow: none !important;
+}
+
+input[type="text"]:focus, select:focus, .form-control:focus {
+  outline: 2px solid #000000;
+  outline-offset: 2px;
+}
+
+/* Overriding Shiny's Ion Range Slider to look like System 1 */
+.irs--shiny .irs-line {
+  background: #ffffff;
+  border: 2px solid #000000;
+  border-radius: 0;
+  height: 12px;
+}
+.irs--shiny .irs-bar {
+  background: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAABZJREFUeNpi2rVq1X8GBgYQwgcsAAgwAA/YAwS30oV5AAAAAElFTkSuQmCC');
+  border-top: 2px solid #000000;
+  border-bottom: 2px solid #000000;
+  height: 12px;
+}
+.irs--shiny .irs-handle {
+  background: #ffffff;
+  border: 2px solid #000000;
+  border-radius: 0;
+  width: 16px;
+  height: 24px;
+  top: 18px;
+  box-shadow: 2px 2px 0px #000000;
+  cursor: pointer;
+}
+.irs--shiny .irs-min, .irs--shiny .irs-max, .irs--shiny .irs-single {
+  background: #ffffff;
+  color: #000000;
+  border: 2px solid #000000;
+  font-family: 'Courier New', Courier, monospace;
+  font-weight: bold;
+  border-radius: 0;
+  padding: 2px 5px;
+}
+.irs--shiny .irs-grid-text {
+  color: #000000;
+  font-family: 'Courier New', Courier, monospace;
+  font-weight: bold;
+}
+
+/* File Input specific fixes */
+.input-group-btn .btn {
+  border-right: none;
+}
+.progress-bar {
+  background-color: #000000;
+}
