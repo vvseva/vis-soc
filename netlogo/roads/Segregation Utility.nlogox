@@ -572,7 +572,7 @@ to calculate-segregation-dimensions
   
   ;; 5. CLUSTERING (Spatial Proximity Index, SP)
   ;; Exhaustive O(N^2) evaluation for exponential distance decay is computationally crushing. 
-  ;; We execute a Monte Carlo approximation by sampling 50 random agents from each group per tick.
+  ;; We execute a Monte Carlo approximation by sampling 400 random agents from each group per tick.
   let n_random 400
   let sample-x n-of (ifelse-value (pop-x > n_random) [n_random] [pop-x]) families with [color = gx-color]
   let sample-y n-of (ifelse-value (pop-y > n_random) [n_random] [pop-y]) families with [color != gx-color]
@@ -725,7 +725,7 @@ to grow-parks
   ]
 end]]></code>
   <widgets>
-    <view x="295" wrappingAllowedX="true" y="10" frameRate="30.0" minPycor="-25" height="408" showTickCounter="true" patchSize="8.0" fontSize="10" wrappingAllowedY="true" width="408" tickCounterLabel="ticks" maxPycor="25" updateMode="1" maxPxcor="25" minPxcor="-25"></view>
+    <view x="295" wrappingAllowedX="true" y="10" frameRate="30.0" minPycor="-25" height="404" showTickCounter="true" patchSize="8.0" fontSize="10" wrappingAllowedY="true" width="404" tickCounterLabel="ticks" maxPycor="25" updateMode="1" maxPxcor="25" minPxcor="-25"></view>
     <plot x="10" autoPlotX="true" yMax="100.0" autoPlotY="true" yAxis="%" y="238" xMin="0.0" height="175" legend="false" xMax="25.0" yMin="0.0" width="249" xAxis="time" display="Percent Similar">
       <setup></setup>
       <update></update>
@@ -748,9 +748,9 @@ end]]></code>
     <button x="124" y="14" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="80" display="go">go</button>
     <slider x="35" step="1" y="605" max="5" width="192" display="number-of-ethnicities" height="50" min="2" direction="Horizontal" default="2.0" variable="number-of-ethnicities"></slider>
     <slider x="15" step="1" y="176" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
-    <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="10.0" variable="neighborhood-distance"></slider>
+    <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="4.0" variable="neighborhood-distance"></slider>
     <slider x="815" step="1" y="15" max="10" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="4.0" variable="venues-number"></slider>
-    <slider x="815" step="1" y="103" max="20" width="173" display="venue-catchment-distance" height="50" min="0" direction="Horizontal" default="11.0" variable="venue-catchment-distance"></slider>
+    <slider x="815" step="1" y="103" max="20" width="173" display="venue-catchment-distance" height="50" min="0" direction="Horizontal" default="5.0" variable="venue-catchment-distance"></slider>
     <slider x="815" step="0.1" y="178" max="1" width="222" display="venue-exclusivity" height="50" min="0.0" direction="Horizontal" default="1.0" variable="venue-exclusivity"></slider>
     <chooser x="815" y="316" height="60" variable="new-venue-color" current="0" width="157" display="new-venue-color">
       <choice type="double" value="15.0"></choice>
@@ -786,7 +786,7 @@ plotxy utility-threshold plot-y-max</update>
     </chooser>
     <monitor x="420" precision="1" y="535" height="60" fontSize="11" width="113" display="Percent Unhappy">percent-unhappy</monitor>
     <monitor x="294" precision="1" y="535" height="60" fontSize="11" width="108" display="Percent Similar">percent-similar</monitor>
-    <chooser x="480" y="670" height="60" variable="road-scenario" current="1" width="250" display="road-scenario">
+    <chooser x="480" y="670" height="60" variable="road-scenario" current="3" width="250" display="road-scenario">
       <choice type="string" value="real-norrkoping"></choice>
       <choice type="string" value="empty"></choice>
       <choice type="string" value="grid"></choice>
@@ -794,10 +794,10 @@ plotxy utility-threshold plot-y-max</update>
       <choice type="string" value="stockholm"></choice>
     </chooser>
     <slider x="805" step="1" y="625" max="10" width="250" display="parks-number" height="50" min="0" direction="Horizontal" default="1.0" variable="parks-number"></slider>
-    <slider x="810" step="1" y="685" max="20" width="250" display="park-catchment-distance" height="50" min="0" direction="Horizontal" default="10.0" variable="park-catchment-distance"></slider>
+    <slider x="810" step="1" y="685" max="20" width="250" display="park-catchment-distance" height="50" min="0" direction="Horizontal" default="2.0" variable="park-catchment-distance"></slider>
     <slider x="1105" step="0.1" y="405" max="1" width="250" display="beta5-park-group" height="50" min="0" direction="Horizontal" default="0.1" variable="beta5-park-group"></slider>
     <slider x="205" step="1" y="675" max="20" width="250" display="travel-distance" height="50" min="0" direction="Horizontal" default="9.0" variable="travel-distance"></slider>
-    <slider x="205" step="1" y="730" max="10" width="250" display="road-multiplier" height="50" min="0" direction="Horizontal" default="1.0" variable="road-multiplier"></slider>
+    <slider x="205" step="1" y="730" max="10" width="250" display="road-multiplier" height="50" min="0" direction="Horizontal" default="2.0" variable="road-multiplier"></slider>
     <switch x="125" y="710" height="40" on="false" variable="real-travel?" width="90" display="real-travel?"></switch>
     <button x="705" y="470" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="100">draw-roads</button>
     <button x="700" y="515" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="110">remove-roads</button>
@@ -828,93 +828,39 @@ plotxy utility-threshold plot-y-max</update>
     </plot>
     <switch x="295" y="450" height="40" on="false" variable="random-seed?" width="110" display="random-seed?"></switch>
   </widgets>
-  <info><![CDATA[## ACKNOWLEDGMENT
+  <info>## ACKNOWLEDGMENT
 
-This model is from Chapter Three of the book "Introduction to Agent-Based Modeling: Modeling Natural, Social and Engineered Complex Systems with NetLogo", by Uri Wilensky & William Rand.
-
-* Wilensky, U. & Rand, W. (2015). Introduction to Agent-Based Modeling: Modeling Natural, Social and Engineered Complex Systems with NetLogo. Cambridge, MA. MIT Press.
-
-This model is in the IABM Textbook folder of the NetLogo Models Library. The model, as well as any updates to the model, can also be found on the textbook website: http://www.intro-to-abm.com/.
+Not yet
 
 ## WHAT IS IT?
 
-This project models the behavior of two types of turtles in a mythical pond. The red turtles and green turtles get along with one another. But each turtle wants to make sure that it lives near some of "its own." That is, each red turtle wants to live near at least some red turtles, and each green turtle wants to live near at least some green turtles. The simulation shows how these individual preferences ripple through the pond, leading to large-scale patterns. This model is an extension of the Segregation Simple Extension 2 model. It adds a constraint that agents also want to have a minimum number of different agents around them.
 
-This project was inspired by Thomas Schelling's writings about social systems (particularly with regards to housing segregation in cities).
 
 ## HOW TO USE IT
 
-Click the SETUP button to set up the turtles. There are equal numbers of each color turtles. The turtles move around until there is at most one turtle on a patch.  Click GO to start the simulation. If turtles don't have enough same-color neighbors, they jump to a nearby patch.
 
-The NUMBER slider controls the total number of turtles. (It takes effect the next time you click SETUP.) The NUMBER-OF-ETHNICITIES slider controls the number of different types of turtles, each a different color. The %-SIMILAR-WANTED slider controls the percentage of same-color turtles that each turtle wants among its neighbors. For example, if the slider is set at 30, each green turtle wants at least 30% of its neighbors to be green turtles. The %-DIFFERENT-WANTED slider controls the percentage of different-color turtles that each turtle wants among its neighbors. Turtles can only be happy if both the %-similar and %-different constraints are met.
-
-The "PERCENT SIMILAR" monitor shows the average percentage of same-color neighbors for each turtle. It starts at about 0.5, since each turtle starts (on average) with an equal number of red and green turtles as neighbors. The "PERCENT UNHAPPY" monitor shows the percent of turtles that have fewer same-ethnicity neighbors than they want (and thus want to move).  Both monitors are also plotted.
 
 ## THINGS TO NOTICE
 
-When you execute SETUP, the turtles are randomly distributed throughout the pond. But many turtles are "unhappy" since they don't have enough neighbors of the same ethnicity. The unhappy turtles jump to new locations in the vicinity. But in the new locations, they might tip the balance of the local population, prompting other turtles to leave. If a few red turtles move into an area, the local blue or orange turtles might leave. But when the blue or orange turtles move to a new area, they might prompt red turtles to leave that area, and so on.
 
-Over time, the number of unhappy turtles decreases. But the pond becomes more segregated, with clusters of each ethnicity.
-
-Again, relatively small individual preferences can lead to significant overall segregation. The exact numbers depend on how many ethnicities you have, and on the random distribution of their preferences for similarity.
 
 ## THINGS TO TRY
 
-How does the diversity in PERCENT-SIMILAR-WANTED for each ethnicity affect the overall segregation pattern?
 
-How does the added constraint of the PERCENT-DIFFERENT-WANTED for each ethnicity affect the overall segregation pattern?
-
-Try different values for %-SIMILAR-WANTED. How does the overall degree of segregation change?
-
-Try different values for NUMBER-OF-ETHNICITIES. How does the overall segregation pattern change?
-
-If each turtle wants at least 40% same-color neighbors, what percentage (on average) do they end up with?
-
-For what slider settings does the model run forever without all agents being satisfied?
 
 ## NETLOGO FEATURES
 
-In the UPDATE-GLOBALS procedure, note the use of SUM, COUNT, VALUES-FROM, and WITH to compute the percentages displayed in the monitors and plots.
+
 
 ## CREDITS AND REFERENCES
 
 This model is a simplified version of:
 
-* Wilensky, U. (1997).  NetLogo Segregation model.  http://ccl.northwestern.edu/netlogo/models/Segregation.  Center for Connected Learning and Computer-Based Modeling, Northwestern University, Evanston, IL.
 
-Schelling, T. (1978). Micromotives and Macrobehavior. New York: Norton.
-
-See also: Rauch, J. (2002). Seeing Around Corners; The Atlantic Monthly; April 2002;Volume 289, No. 4; 35-48. https://www.theatlantic.com/magazine/archive/2002/04/seeing-around-corners/302471/
 
 ## HOW TO CITE
 
-This model is part of the textbook, “Introduction to Agent-Based Modeling: Modeling Natural, Social and Engineered Complex Systems with NetLogo.”
-
-If you mention this model or the NetLogo software in a publication, we ask that you include the citations below.
-
-For the model itself:
-
-* Wilensky, U., Rand, W. (2006).  NetLogo Segregation Simple Extension 3 model.  http://ccl.northwestern.edu/netlogo/models/SegregationSimpleExtension3.  Center for Connected Learning and Computer-Based Modeling, Northwestern Institute on Complex Systems, Northwestern University, Evanston, IL.
-
-Please cite the NetLogo software as:
-
-* Wilensky, U. (1999). NetLogo. http://ccl.northwestern.edu/netlogo/. Center for Connected Learning and Computer-Based Modeling, Northwestern University, Evanston, IL.
-
-Please cite the textbook as:
-
-* Wilensky, U. & Rand, W. (2015). Introduction to Agent-Based Modeling: Modeling Natural, Social and Engineered Complex Systems with NetLogo. Cambridge, MA. MIT Press.
-
-## COPYRIGHT AND LICENSE
-
-Copyright 2006 Uri Wilensky.
-
-![CC BY-NC-SA 3.0](http://ccl.northwestern.edu/images/creativecommons/byncsa.png)
-
-This work is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 3.0 License.  To view a copy of this license, visit https://creativecommons.org/licenses/by-nc-sa/3.0/ or send a letter to Creative Commons, 559 Nathan Abbott Way, Stanford, California 94305, USA.
-
-Commercial licenses are also available. To inquire about commercial licenses, please contact Uri Wilensky at uri@northwestern.edu.
-
-<!-- 2006 Cite: Wilensky, U., Rand, W. -->]]></info>
+</info>
   <turtleShapes>
     <shape name="default" rotatable="true" editableColorIndex="0">
       <polygon color="-1920102913" filled="true" marked="true">
