@@ -16,7 +16,7 @@ model_path <- "C:/Users/vsesu60/OneDrive - Linköpings universitet/Documents/R/v
 ```{r}
 setup_file <- create_experiment(
   name = "Venue Segragation Model Analysis",
-  repetitions = 2,
+  repetitions = 3,
   run_metrics_every_step = TRUE,
   setup = "setup",
   go = "go",
@@ -57,21 +57,12 @@ setup_file <- create_experiment(
 ```
 
 ```{r}
-setup_file |> inspect_experiment()
-```
-
-
-```{r}
 results <-
   model_path |>
   run_experiment(
     setup_file = setup_file,
-    output = c("table", "lists")
+    output = c("table")
   )
-```
-
-```{r}
-results |> glimpse()
 ```
 
 ```{r}
@@ -86,7 +77,7 @@ data <-
 
 ```{r}
 data |> 
-  filter(step <= 200) |> 
+  filter(step <= 100) |>  
   select(
     run_number,
     step,
@@ -100,18 +91,19 @@ data |>
   ) |> 
   filter(index %in% c("index_exposure", "index_dissimilarity", 
                       "index_clustering")) |>
+  filter(venue_catchment_distance %in% c(1, 15)) |>
   mutate(grouping_combo_run = str_c(run_number, index, venue_catchment_distance),
          grouping_combo_condition = str_c(index, venue_catchment_distance)) |> 
-  ggplot(aes(x = step, y = value, color = index, group = grouping_combo_run)) +
+  ggplot(aes(x = step, y = value, color = venue_catchment_distance |> factor(), group = grouping_combo_run, linetype = index)) +
   geom_line(alpha = 0.25)+
-  facet_wrap(~ venue_catchment_distance)+
+  # facet_wrap(~ venue_catchment_distance)+
   geomtextpath::geom_textpath(
-    aes(group = grouping_combo_condition, color = index, label = index), 
-    offset = unit(5, "pt"), gap = T, text_smoothing = 100)+
+    aes(group = index, label = index), 
+    offset = unit(5, "pt"), gap = T, text_smoothing = 90)+
   labs(title = "Segregation Indices Over Time (venue_catchment_distance)", x = "Step", 
-       y = "Index Value", color = "Index") +
+       y = "Index Value", color = "venue_catchment_distance") +
   theme_minimal()+
-  theme(legend.position = "none")
+  theme(legend.position = "bottom")
        
 ```
 
@@ -214,5 +206,473 @@ setup_file <- create_experiment(
     "road-scenario" = c("empty")
   )
 )
+```
+
+### funtion 
+
+```{r}
+library(tidyverse)
+library(logolink)
+library(geomtextpath)
+
+run_segregation_experiment <- function(
+  model_path,
+  repetitions = 3,
+  max_steps = 100,
+  indices_to_plot = c("index_exposure", "index_dissimilarity", "index_clustering"),
+  # Pass constants as a list so you can easily modify them per run
+  constants = list(
+    "density-percent" = 70,
+    "%-similar-wanted" = 30,
+    "number-of-ethnicities" = 2,
+    "%-different-wanted" = 0,
+    "neighborhood-distance" = 2,
+    "venues-number" = 5,
+    "venue-catchment-distance" = c(1, 15), # Example of a tested/varying parameter
+    "venue-exclusivity" = 1,
+    "utility-threshold" = 0.1,
+    "beta1-neighbors" = 0.5,
+    "beta2-venue-group" = 0.5,
+    "beta3-venue-loc" = 0,
+    "beta4-home-venues" = 0,
+    "road-scenario" = "empty",
+    "parks-number" = 3,
+    "park-catchment-distance" = 2,
+    "beta5-park-group" = 0.25,
+    "travel-distance" = 5,
+    "road-multiplier" = 1,
+    "real-travel?" = FALSE,
+    "random-seed?" = FALSE
+  )
+) {
+  
+  # 1. Define the experiment setup
+  setup_file <- create_experiment(
+    name = "Venue Segregation Model Analysis",
+    repetitions = repetitions,
+    run_metrics_every_step = TRUE,
+    setup = "setup",
+    go = "go",
+    time_limit = max_steps + 50, # Buffer to ensure we hit max_steps safely
+    metrics = c(
+      'index-exposure',
+      'index-dissimilarity',
+      'index-clustering',
+      'index-centrality',
+      'index-concentration'
+    ),
+    constants = constants
+  )
+  
+  # 2. Run the experiment
+  results <- model_path |>
+    run_experiment(
+      setup_file = setup_file,
+      output = c("table")
+    )
+  
+  # 3. Extract the table natively
+  data <- results[["table"]]
+  
+  # 4. Identify the varying parameter to dynamically color the plot
+  # Finds any constant with length > 1 (e.g., c(1, 15))
+  varying_params <- names(constants)[lengths(constants) > 1]
+  
+  if (length(varying_params) == 0) {
+    legend_title <- "run_number"
+    varying_col <- "run_number"
+  } else {
+    legend_title <- varying_params[1]
+    # NetLogo hyphenated params become underscored cols in R
+    varying_col <- str_replace_all(legend_title, "-", "_") 
+  }
+  
+  # 5. Build dynamic title string from all constants
+  param_strings <- imap_chr(constants, ~ paste0(.y, ": ", paste(.x, collapse = ", ")))
+  dynamic_subtitle <- str_wrap(paste(param_strings, collapse = " | "), width = 110)
+  
+  # 6. Process data and generate the plot
+  p <- data |> 
+    filter(step <= max_steps) |> 
+    select(
+      run_number,
+      step,
+      starts_with("index_"),
+      all_of(varying_col) 
+    ) |> 
+    pivot_longer(
+      cols = starts_with("index_"),
+      names_to = "index",
+      values_to = "value"
+    ) |> 
+    filter(index %in% indices_to_plot) |>
+    mutate(
+      # Tidy evaluation: Use .data[[varying_col]] to reference the column dynamically
+      grouping_combo_run = str_c(run_number, index, .data[[varying_col]]),
+      # Clean up the index names for prettier labels
+      index_label = str_remove(index, "index_") 
+    ) |> 
+    ggplot(aes(
+      x = step, 
+      y = value, 
+      color = factor(.data[[varying_col]]), 
+      group = grouping_combo_run, 
+      linetype = index_label
+    )) +
+    geom_line(alpha = 0.25) +
+    geomtextpath::geom_textpath(
+      aes(group = index_label, label = index_label), 
+      offset = unit(5, "pt"), 
+      gap = TRUE, 
+      text_smoothing = 90,
+      color = "gray20"
+    ) +
+    labs(
+      title = "Segregation Indices Over Time",
+      subtitle = varying_col, # Show the name of the varying parameter in the subtitle
+      caption  = dynamic_subtitle,
+      x = "Step", 
+      y = "Index Value", 
+      color = legend_title,
+      linetype = "Index"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",
+      plot.subtitle = element_text(size = 11, color = "gray20", margin = margin(b = 10)),
+      plot.caption = element_text(size = 7, color = "gray50", hjust = 0, margin = margin(t = 15))
+    )+
+    guides(linetype = "none")
+  
+  # Return both the raw data and the plot as a list so you can access either
+  return(list(
+    data = data,
+    plot = p
+  ))
+}
+```
+
+## trashold uttility (does not work. should not work)
+
+```{r}
+my_path <- "C:/Users/vsesu60/OneDrive - Linköpings universitet/Documents/R/vis-soc/netlogo/roads/Segregation Utility.nlogox"
+
+custom_constants <- list(
+  "density-percent" = 70,
+  "%-similar-wanted" = 30,
+  "number-of-ethnicities" = 2,
+  "%-different-wanted" = 0,
+  "neighborhood-distance" = 2,
+  "venues-number" = 5,
+  "venue-catchment-distance" = 10, # Keep this static this time
+  "venue-exclusivity" = 1,
+  "utility-threshold" = c(0.1, 0.5, 0.9), # Now testing this!
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = "empty",
+  "parks-number" = 3,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.25,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+new_experiment <- run_segregation_experiment(
+  model_path = my_path, 
+  constants = custom_constants, 
+  repetitions = 5
+)
+
+# Render the new plot
+print(new_experiment$plot)+
+  guides(linetype = "none")
+```
+
+## low neighborhood preferences (beta) deceases segregation
+
+```{r}
+my_path <- "C:/Users/vsesu60/OneDrive - Linköpings universitet/Documents/R/vis-soc/netlogo/roads/Segregation Utility.nlogox"
+
+custom_constants2 <- list(
+  "density-percent" = 70,
+  "%-similar-wanted" = 30,
+  "number-of-ethnicities" = 2,
+  "%-different-wanted" = 0,
+  "neighborhood-distance" = 2,
+  "venues-number" = 5,
+  "venue-catchment-distance" = 10, # Keep this static this time
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5, # Now testing this!
+  "beta1-neighbors" = c(0.25, 0.75),
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = "empty",
+  "parks-number" = 3,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.25,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+new_experiment2 <- run_segregation_experiment(
+  model_path = my_path, 
+  constants = custom_constants2, 
+  repetitions = 5
+)
+
+# Render the new plot
+print(new_experiment2$plot)
+```
+
+## low venue preferences (beta) increases segregation
+
+gives an opportunities to move away from a home location segregation
+
+```{r}
+my_path <- "C:/Users/vsesu60/OneDrive - Linköpings universitet/Documents/R/vis-soc/netlogo/roads/Segregation Utility.nlogox"
+
+custom_constants3 <- list(
+  "density-percent" = 70,
+  "%-similar-wanted" = 30,
+  "number-of-ethnicities" = 2,
+  "%-different-wanted" = 0,
+  "neighborhood-distance" = 2,
+  "venues-number" = 5,
+  "venue-catchment-distance" = 10, # Keep this static this time
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5, # Now testing this!
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = c(0.25, 0.75),
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = "empty",
+  "parks-number" = 3,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+new_experiment3 <- run_segregation_experiment(
+  model_path = my_path, 
+  constants = custom_constants3, 
+  repetitions = 5
+)
+
+# Render the new plot
+print(new_experiment3$plot)
+```
+
+## Parks idk
+
+
+```{r}
+custom_constants4 <- list(
+  "density-percent" = 70,
+  "%-similar-wanted" = 30,
+  "number-of-ethnicities" = 2,
+  "%-different-wanted" = 0,
+  "neighborhood-distance" = 2,
+  "venues-number" = 5,
+  "venue-catchment-distance" = 10, 
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = "empty",
+  "parks-number" = c(0, 10),
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+new_experiment4 <- run_segregation_experiment(
+  model_path = my_path, 
+  constants = custom_constants4, 
+  repetitions = 5
+)
+
+# Render the new plot
+print(new_experiment4$plot)
+```
+
+
+## neighboorhood size (sanity check)
+
+model cant converge with a really large distance?
+
+```{r}
+custom_constants5 <- list(
+  "density-percent" = 70,
+  "%-similar-wanted" = 30,
+  "number-of-ethnicities" = 2,
+  "%-different-wanted" = 0,
+  "neighborhood-distance" = c(1, 2, 10),
+  "venues-number" = 5,
+  "venue-catchment-distance" = 10, 
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = "empty",
+  "parks-number" = 0,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+new_experiment5 <- run_segregation_experiment(
+  model_path = my_path, 
+  constants = custom_constants5, 
+  repetitions = 5
+)
+
+# Render the new plot
+print(new_experiment5$plot)
+```
+
+
+## Number of venues
+
+More venues --> less exposure (at least early)? everything else is same
+
+```{r}
+custom_constants6 <- list(
+  "density-percent" = 70,
+  "%-similar-wanted" = 30,
+  "number-of-ethnicities" = 2,
+  "%-different-wanted" = 0,
+  "neighborhood-distance" = 2,
+  "venues-number" = c(0, 5, 25),
+  "venue-catchment-distance" = 10, 
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = "empty",
+  "parks-number" = 0,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+new_experiment6 <- run_segregation_experiment(
+  model_path = my_path, 
+  constants = custom_constants6, 
+  repetitions = 5
+)
+
+# Render the new plot
+print(new_experiment6$plot)
+```
+
+# road-scenario
+
+roads increase exposure (compared to lack of roads), since they increase travel?
+
+```{r}
+custom_constants7 <- list(
+  "density-percent" = 70,
+  "%-similar-wanted" = 30,
+  "number-of-ethnicities" = 2,
+  "%-different-wanted" = 0,
+  "neighborhood-distance" = 2,
+  "venues-number" = 6,
+  "venue-catchment-distance" = 10, 
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = c("empty", "grid"),
+  "parks-number" = 0,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+new_experiment7 <- run_segregation_experiment(
+  model_path = my_path, 
+  constants = custom_constants7, 
+  repetitions = 5
+)
+
+# Render the new plot
+print(new_experiment7$plot)
+```
+
+## venue-exclusivity
+
+lower exclusivity increases exposure
+
+```{r}
+custom_constants8 <- list(
+  "density-percent" = 70,
+  "%-similar-wanted" = 30,
+  "number-of-ethnicities" = 2,
+  "%-different-wanted" = 0,
+  "neighborhood-distance" = 2,
+  "venues-number" = 6,
+  "venue-catchment-distance" = 10, 
+  "venue-exclusivity" = c(0, 0.5, 1),
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = "empty",
+  "parks-number" = 0,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+new_experiment8 <- run_segregation_experiment(
+  model_path = my_path, 
+  constants = custom_constants8, 
+  repetitions = 5
+)
+
+# Render the new plot
+print(new_experiment8$plot)
 ```
 
