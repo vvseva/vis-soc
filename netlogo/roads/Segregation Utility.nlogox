@@ -206,6 +206,64 @@ to draw-selected-scenario
       ]
     ]
 
+    road-scenario = "isolated-communities" [
+      ask patches [
+        ;; Wide rivers creating 4 distinct quadrants
+        if abs pxcor < 2 or abs pycor < 2 [
+          set pcolor blue
+          set is-river? true
+        ]
+        ;; Internal road grids that do NOT cross the rivers
+        if (pxcor mod 7 = 0) or (pycor mod 7 = 0) [
+          if not is-river? [
+            set pcolor brown
+            set is-road? true
+          ]
+        ]
+      ]
+    ]
+
+    road-scenario = "connected-communities" [
+      ask patches [
+        ;; Same river layout
+        if abs pxcor < 2 or abs pycor < 2 [
+          set pcolor blue
+          set is-river? true
+        ]
+        ;; High density roads that overwrite rivers to act as bridges
+        if (pxcor mod 5 = 0) or (pycor mod 5 = 0) [
+          set pcolor brown
+          set is-road? true
+          set is-river? false ;; Overwrites river to create a bridge
+        ]
+      ]
+    ]
+
+    road-scenario = "city-center-suburbia" [
+      ask patches [
+        let dist distancexy 0 0
+        ;; Core City Center: Dense road grid
+        if dist <= 10 [
+          if (pxcor mod 3 = 0) or (pycor mod 3 = 0) [
+            set pcolor brown
+            set is-road? true
+          ]
+        ]
+        ;; Ring Road separating center from suburbia
+        if dist > 10 and dist < 12 [
+          set pcolor brown
+          set is-road? true
+        ]
+        ;; Suburbia: Sparse roads, mostly empty patches for housing
+        if dist >= 12 [
+          if (pxcor mod 12 = 0) or (pycor mod 12 = 0) [
+            set pcolor brown
+            set is-road? true
+          ]
+        ]
+      ]
+    ]
+
     road-scenario = "norrkoping" [
       ask patches [
         if (pxcor mod 12 = 0) or (pycor mod 12 = 0) [ 
@@ -794,7 +852,7 @@ end]]></code>
     <button x="124" y="14" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="80" display="go">go</button>
     <slider x="35" step="1" y="605" max="5" width="192" display="number-of-ethnicities" height="50" min="2" direction="Horizontal" default="2.0" variable="number-of-ethnicities"></slider>
     <slider x="15" step="1" y="176" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
-    <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="4.0" variable="neighborhood-distance"></slider>
+    <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="5.0" variable="neighborhood-distance"></slider>
     <slider x="815" step="1" y="15" max="10" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="0.0" variable="venues-number"></slider>
     <slider x="815" step="1" y="103" max="20" width="173" display="venue-catchment-distance" height="50" min="0" direction="Horizontal" default="5.0" variable="venue-catchment-distance"></slider>
     <slider x="815" step="0.1" y="178" max="1" width="222" display="venue-exclusivity" height="50" min="0.0" direction="Horizontal" default="1.0" variable="venue-exclusivity"></slider>
@@ -823,17 +881,20 @@ plotxy utility-threshold plot-y-max</update>
     </plot>
     <monitor x="420" precision="1" y="535" height="60" fontSize="11" width="113" display="Percent Unhappy">percent-unhappy</monitor>
     <monitor x="294" precision="1" y="535" height="60" fontSize="11" width="108" display="Percent Similar">percent-similar</monitor>
-    <chooser x="480" y="670" height="60" variable="road-scenario" current="4" width="250" display="road-scenario">
+    <chooser x="480" y="670" height="60" variable="road-scenario" current="7" width="250" display="road-scenario">
       <choice type="string" value="real-norrkoping"></choice>
       <choice type="string" value="empty"></choice>
       <choice type="string" value="grid"></choice>
       <choice type="string" value="norrkoping"></choice>
       <choice type="string" value="stockholm"></choice>
+      <choice type="string" value="isolated-communities"></choice>
+      <choice type="string" value="city-center-suburbia"></choice>
+      <choice type="string" value="connected-communities"></choice>
     </chooser>
     <slider x="805" step="1" y="625" max="10" width="250" display="parks-number" height="50" min="0" direction="Horizontal" default="0.0" variable="parks-number"></slider>
     <slider x="810" step="1" y="685" max="20" width="250" display="park-catchment-distance" height="50" min="0" direction="Horizontal" default="2.0" variable="park-catchment-distance"></slider>
-    <slider x="205" step="1" y="675" max="20" width="250" display="travel-distance" height="50" min="0" direction="Horizontal" default="9.0" variable="travel-distance"></slider>
-    <slider x="205" step="1" y="730" max="10" width="250" display="road-multiplier" height="50" min="0" direction="Horizontal" default="2.0" variable="road-multiplier"></slider>
+    <slider x="205" step="1" y="675" max="20" width="250" display="travel-distance" height="50" min="0" direction="Horizontal" default="2.0" variable="travel-distance"></slider>
+    <slider x="205" step="1" y="730" max="10" width="250" display="road-multiplier" height="50" min="0" direction="Horizontal" default="3.0" variable="road-multiplier"></slider>
     <switch x="125" y="710" height="40" on="false" variable="real-travel?" width="90" display="real-travel?"></switch>
     <button x="705" y="470" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="100">draw-roads</button>
     <button x="700" y="515" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="110">remove-roads</button>
@@ -866,7 +927,7 @@ plotxy utility-threshold plot-y-max</update>
     <slider x="1135" step="0.1" y="235" max="1" width="187" display="beta3-venue-loc" height="50" min="0" direction="Horizontal" default="0.0" variable="beta3-venue-loc"></slider>
     <slider x="1135" step="0.1" y="290" max="1" width="217" display="beta4-home-venues" height="50" min="0" direction="Horizontal" default="0.0" variable="beta4-home-venues"></slider>
     <slider x="1135" step="0.1" y="345" max="1" width="250" display="beta5-park-group" height="50" min="0" direction="Horizontal" default="0.0" variable="beta5-park-group"></slider>
-    <slider x="1135" step="0.1" y="125" max="1" width="192" display="beta1-neighbors" height="50" min="0" direction="Horizontal" default="0.6" variable="beta1-neighbors"></slider>
+    <slider x="1135" step="0.1" y="125" max="1" width="192" display="beta1-neighbors" height="50" min="0" direction="Horizontal" default="0.4" variable="beta1-neighbors"></slider>
     <slider x="1135" step="0.1" y="30" max="1" width="182" display="utility-threshold" height="50" min="0" direction="Horizontal" default="0.1" variable="utility-threshold"></slider>
     <slider x="1135" step="0.1" y="400" max="1" width="250" display="beta6-roads-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta6-roads-group"></slider>
   </widgets>
