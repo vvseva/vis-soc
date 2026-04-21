@@ -41,6 +41,7 @@ patches-own [
   saved-color
   is-green?
   my-park-id
+  my-commuters
 ]
 
 families-own [
@@ -56,6 +57,7 @@ families-own [
   my-commitment
   visited-venues
   visited-parks       ;; New tracking for park attendees
+  visited-roads
 ]
 
 venues-own [
@@ -170,6 +172,7 @@ to setup-families
         
         set visited-venues (turtle-set nobody)
         set visited-parks (turtle-set nobody)
+        set visited-roads (patch-set nobody)
       ]
     ]
   ]
@@ -186,6 +189,7 @@ to draw-selected-scenario
     set my-park-id nobody
     set traffic 0      
     set saved-color black
+    set my-commuters (turtle-set nobody)
   ]
 
   (ifelse
@@ -299,16 +303,25 @@ end
 to evaluate-venues-and-parks
   ;; 1. Families choose venues and parks
   ask families [
+    ;; ROADS (Local neighborhood check)
+    set visited-roads patches in-radius neighborhood-distance with [is-road?]
+    
+    ;; DYNAMIC CATCHMENT (Expand if roads are present)
+    let dynamic-catchment neighborhood-distance
+    if any? visited-roads [
+      set dynamic-catchment (neighborhood-distance * road-multiplier)
+    ]
+
     ;; VENUES
-    let possible-venues venues in-radius my-catchment-distance
+    let possible-venues venues in-radius dynamic-catchment
     let open-venues-group possible-venues with [color = [color] of myself]
     let open-venues-adventure possible-venues with [color != [color] of myself and my-venue-exclusivity < [my-adventurousness] of myself]
 
     let open-venues (turtle-set open-venues-group open-venues-adventure )
     set visited-venues open-venues with [1 - my-venue-obligatoriness < [my-commitment] of myself]
     
-    ;; PARKS (Using the new specific park catchment distance)
-    set visited-parks parks in-radius park-catchment-distance
+    ;; PARKS
+    set visited-parks parks in-radius dynamic-catchment
   ]
 
   ;; 2. Venues update their attendee list
@@ -320,41 +333,72 @@ to evaluate-venues-and-parks
   ask parks [
     set my-attendees families with [member? myself visited-parks]
   ]
+  
+  ;; 4. Roads update their attendee list
+  ask patches with [is-road?] [
+    set my-commuters families with [member? myself visited-roads]
+  ]
 end
 
 to update-families
   ask families [
     ;; --- X1: Agents in my Neighborhood (Raycast Vision) ---
+    ;; We still identify visible neighbors because total-nearby and similar-nearby 
+    ;; are required globally for the UI plots and Exposure Index.
     let candidates other families in-radius neighborhood-distance
     let visible-candidates candidates with [ has-line-of-sight? myself ]
     
     set total-nearby count visible-candidates
     set similar-nearby count visible-candidates with [color = [color] of myself]
-    let val1 calculate-similarity visible-candidates
+    
+    let val1 0
+    if beta1-neighbors != 0 [
+      set val1 calculate-similarity visible-candidates
+    ]
 
     ;; --- X2: Agents in my Venues ---
-    let group2 (turtle-set [my-attendees] of visited-venues)
-    set group2 other group2 ;; Remove myself from the count
-    let val2 calculate-similarity group2
+    let val2 0
+    if beta2-venue-group != 0 [
+      let group2 (turtle-set [my-attendees] of visited-venues)
+      set group2 other group2 ;; Remove myself from the count
+      set val2 calculate-similarity group2
+    ]
 
     ;; --- X3: Agents around my Venues ---
-    let group3 (turtle-set [other families in-radius neighborhood-distance] of visited-venues)
-    let val3 calculate-similarity group3
+    let val3 0
+    if beta3-venue-loc != 0 [
+      let group3 (turtle-set [other families in-radius neighborhood-distance] of visited-venues)
+      set val3 calculate-similarity group3
+    ]
 
     ;; --- X4: Agents coming to my Neighborhood ---
-    let local-venues venues in-radius neighborhood-distance
-    let group4 (turtle-set [my-attendees] of local-venues)
-    set group4 other group4 
-    let val4 calculate-similarity group4
+    let val4 0
+    if beta4-home-venues != 0 [
+      let local-venues venues in-radius neighborhood-distance
+      let group4 (turtle-set [my-attendees] of local-venues)
+      set group4 other group4 
+      set val4 calculate-similarity group4
+    ]
 
     ;; --- X5: Agents in my Parks (New Variable per constraints) ---
-    let group5 (turtle-set [my-attendees] of visited-parks)
-    set group5 other group5
-    let val5 calculate-similarity group5
+    let val5 0
+    if beta5-park-group != 0 [
+      let group5 (turtle-set [my-attendees] of visited-parks)
+      set group5 other group5
+      set val5 calculate-similarity group5
+    ]
+
+    ;; --- X6: Agents on my Visited Roads (New Variable) ---
+    let val6 0
+    if beta6-roads-group != 0 [
+      let group6 (turtle-set [my-commuters] of visited-roads)
+      set group6 other group6
+      set val6 calculate-similarity group6
+    ]
 
     ;; --- CALCULATE DISCRETE CHOICE UTILITY DISTRIBUTION ---
     ;; Formula: V = Sum(Beta_i * X_i) + Epsilon
-    let weights-sum (beta1-neighbors + beta2-venue-group + beta3-venue-loc + beta4-home-venues + beta5-park-group)
+    let weights-sum (beta1-neighbors + beta2-venue-group + beta3-venue-loc + beta4-home-venues + beta5-park-group + beta6-roads-group)
     
     ;; Introduce error term to create the discrete probability distribution based on logit structure
     let eps random-normal 0 0.1 
@@ -363,7 +407,8 @@ to update-families
                        (val2 * beta2-venue-group) + 
                        (val3 * beta3-venue-loc) + 
                        (val4 * beta4-home-venues) + 
-                       (val5 * beta5-park-group)
+                       (val5 * beta5-park-group) +
+                       (val6 * beta6-roads-group)
 
     ifelse weights-sum > 0 [
       set my-utility (weighted-score / weights-sum) + eps
@@ -659,6 +704,7 @@ to draw-roads
       set is-river? false
       set traffic 0
       ask families-here [ find-new-spot ]
+      set my-commuters (turtle-set nobody)
     ]
     display
   ]
@@ -725,7 +771,7 @@ to grow-parks
   ]
 end]]></code>
   <widgets>
-    <view x="295" wrappingAllowedX="true" y="10" frameRate="30.0" minPycor="-25" height="404" showTickCounter="true" patchSize="8.0" fontSize="10" wrappingAllowedY="true" width="404" tickCounterLabel="ticks" maxPycor="25" updateMode="1" maxPxcor="25" minPxcor="-25"></view>
+    <view x="295" wrappingAllowedX="false" y="10" frameRate="30.0" minPycor="-25" height="404" showTickCounter="true" patchSize="8.0" fontSize="10" wrappingAllowedY="false" width="404" tickCounterLabel="ticks" maxPycor="25" updateMode="1" maxPxcor="25" minPxcor="-25"></view>
     <plot x="10" autoPlotX="true" yMax="100.0" autoPlotY="true" yAxis="%" y="238" xMin="0.0" height="175" legend="false" xMax="25.0" yMin="0.0" width="249" xAxis="time" display="Percent Similar">
       <setup></setup>
       <update></update>
@@ -749,7 +795,7 @@ end]]></code>
     <slider x="35" step="1" y="605" max="5" width="192" display="number-of-ethnicities" height="50" min="2" direction="Horizontal" default="2.0" variable="number-of-ethnicities"></slider>
     <slider x="15" step="1" y="176" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
     <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="4.0" variable="neighborhood-distance"></slider>
-    <slider x="815" step="1" y="15" max="10" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="4.0" variable="venues-number"></slider>
+    <slider x="815" step="1" y="15" max="10" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="0.0" variable="venues-number"></slider>
     <slider x="815" step="1" y="103" max="20" width="173" display="venue-catchment-distance" height="50" min="0" direction="Horizontal" default="5.0" variable="venue-catchment-distance"></slider>
     <slider x="815" step="0.1" y="178" max="1" width="222" display="venue-exclusivity" height="50" min="0.0" direction="Horizontal" default="1.0" variable="venue-exclusivity"></slider>
     <chooser x="815" y="316" height="60" variable="new-venue-color" current="0" width="157" display="new-venue-color">
@@ -761,11 +807,7 @@ end]]></code>
     </chooser>
     <button x="815" y="471" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="217">place-temporary-venue</button>
     <button x="810" y="528" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="237">confirm-venue-placement</button>
-    <slider x="1135" step="0.1" y="30" max="1" width="182" display="utility-threshold" height="50" min="0" direction="Horizontal" default="0.1" variable="utility-threshold"></slider>
-    <slider x="1140" step="0.1" y="107" max="1" width="192" display="beta1-neighbors" height="50" min="0" direction="Horizontal" default="0.1" variable="beta1-neighbors"></slider>
-    <slider x="1135" step="0.1" y="179" max="1" width="212" display="beta2-venue-group" height="50" min="0" direction="Horizontal" default="0.1" variable="beta2-venue-group"></slider>
-    <slider x="1140" step="0.1" y="266" max="1" width="187" display="beta3-venue-loc" height="50" min="0" direction="Horizontal" default="0.1" variable="beta3-venue-loc"></slider>
-    <slider x="1135" step="0.1" y="338" max="1" width="217" display="beta4-home-venues" height="50" min="0" direction="Horizontal" default="0.1" variable="beta4-home-venues"></slider>
+    <slider x="1135" step="0.1" y="179" max="1" width="212" display="beta2-venue-group" height="50" min="0" direction="Horizontal" default="0.0" variable="beta2-venue-group"></slider>
     <plot x="1100" autoPlotX="true" yMax="10.0" autoPlotY="true" y="480" xMin="0.0" height="175" legend="false" xMax="1.0" yMin="0.0" width="230" display="utility">
       <setup></setup>
       <update></update>
@@ -779,23 +821,17 @@ end]]></code>
 plotxy utility-threshold plot-y-max</update>
       </pen>
     </plot>
-    <chooser x="480" y="605" height="60" variable="visual-mode" current="0" width="250" display="visual-mode">
-      <choice type="string" value="abstract"></choice>
-      <choice type="string" value="stylized"></choice>
-      <choice type="string" value="hyper"></choice>
-    </chooser>
     <monitor x="420" precision="1" y="535" height="60" fontSize="11" width="113" display="Percent Unhappy">percent-unhappy</monitor>
     <monitor x="294" precision="1" y="535" height="60" fontSize="11" width="108" display="Percent Similar">percent-similar</monitor>
-    <chooser x="480" y="670" height="60" variable="road-scenario" current="3" width="250" display="road-scenario">
+    <chooser x="480" y="670" height="60" variable="road-scenario" current="4" width="250" display="road-scenario">
       <choice type="string" value="real-norrkoping"></choice>
       <choice type="string" value="empty"></choice>
       <choice type="string" value="grid"></choice>
       <choice type="string" value="norrkoping"></choice>
       <choice type="string" value="stockholm"></choice>
     </chooser>
-    <slider x="805" step="1" y="625" max="10" width="250" display="parks-number" height="50" min="0" direction="Horizontal" default="1.0" variable="parks-number"></slider>
+    <slider x="805" step="1" y="625" max="10" width="250" display="parks-number" height="50" min="0" direction="Horizontal" default="0.0" variable="parks-number"></slider>
     <slider x="810" step="1" y="685" max="20" width="250" display="park-catchment-distance" height="50" min="0" direction="Horizontal" default="2.0" variable="park-catchment-distance"></slider>
-    <slider x="1105" step="0.1" y="405" max="1" width="250" display="beta5-park-group" height="50" min="0" direction="Horizontal" default="0.1" variable="beta5-park-group"></slider>
     <slider x="205" step="1" y="675" max="20" width="250" display="travel-distance" height="50" min="0" direction="Horizontal" default="9.0" variable="travel-distance"></slider>
     <slider x="205" step="1" y="730" max="10" width="250" display="road-multiplier" height="50" min="0" direction="Horizontal" default="2.0" variable="road-multiplier"></slider>
     <switch x="125" y="710" height="40" on="false" variable="real-travel?" width="90" display="real-travel?"></switch>
@@ -827,6 +863,12 @@ plotxy utility-threshold plot-y-max</update>
       </pen>
     </plot>
     <switch x="295" y="450" height="40" on="false" variable="random-seed?" width="110" display="random-seed?"></switch>
+    <slider x="1135" step="0.1" y="235" max="1" width="187" display="beta3-venue-loc" height="50" min="0" direction="Horizontal" default="0.0" variable="beta3-venue-loc"></slider>
+    <slider x="1135" step="0.1" y="290" max="1" width="217" display="beta4-home-venues" height="50" min="0" direction="Horizontal" default="0.0" variable="beta4-home-venues"></slider>
+    <slider x="1135" step="0.1" y="345" max="1" width="250" display="beta5-park-group" height="50" min="0" direction="Horizontal" default="0.0" variable="beta5-park-group"></slider>
+    <slider x="1135" step="0.1" y="125" max="1" width="192" display="beta1-neighbors" height="50" min="0" direction="Horizontal" default="0.6" variable="beta1-neighbors"></slider>
+    <slider x="1135" step="0.1" y="30" max="1" width="182" display="utility-threshold" height="50" min="0" direction="Horizontal" default="0.1" variable="utility-threshold"></slider>
+    <slider x="1135" step="0.1" y="400" max="1" width="250" display="beta6-roads-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta6-roads-group"></slider>
   </widgets>
   <info>## ACKNOWLEDGMENT
 
