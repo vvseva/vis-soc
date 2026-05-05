@@ -228,11 +228,7 @@ run_segregation_experiment <- function(
     "%-different-wanted" = 0,
     "neighborhood-distance" = 2,
     "venues-number" = 5,
-<<<<<<< HEAD
     "venue-catchment-distance" = 7, # Example of a tested/varying parameter
-=======
-    "venue-catchment-distance" = c(1, 15), # Example of a tested/varying parameter
->>>>>>> 3347dcd28db32ab73a9fc8f6442549182fb0bcfc
     "venue-exclusivity" = 1,
     "utility-threshold" = 0.1,
     "beta1-neighbors" = 0.5,
@@ -378,12 +374,8 @@ custom_constants <- list(
   "road-scenario" = "empty",
   "parks-number" = 3,
   "park-catchment-distance" = 2,
-<<<<<<< HEAD
   "beta5-park-group" = 0,
   "beta6-roads-group" = 0.5,
-=======
-  "beta5-park-group" = 0.25,
->>>>>>> 3347dcd28db32ab73a9fc8f6442549182fb0bcfc
   "travel-distance" = 5,
   "road-multiplier" = 1,
   "real-travel?" = FALSE,
@@ -685,7 +677,6 @@ new_experiment8 <- run_segregation_experiment(
 print(new_experiment8$plot)
 ```
 
-<<<<<<< HEAD
 ## Interventions
 
 
@@ -772,5 +763,3 @@ experiment11 <- run_segregation_experiment(
 print(experiment11$plot)
 ```
 
-=======
->>>>>>> 3347dcd28db32ab73a9fc8f6442549182fb0bcfc
