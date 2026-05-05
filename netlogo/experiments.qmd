@@ -228,7 +228,7 @@ run_segregation_experiment <- function(
     "%-different-wanted" = 0,
     "neighborhood-distance" = 2,
     "venues-number" = 5,
-    "venue-catchment-distance" = c(1, 15), # Example of a tested/varying parameter
+    "venue-catchment-distance" = 7, # Example of a tested/varying parameter
     "venue-exclusivity" = 1,
     "utility-threshold" = 0.1,
     "beta1-neighbors" = 0.5,
@@ -374,7 +374,8 @@ custom_constants <- list(
   "road-scenario" = "empty",
   "parks-number" = 3,
   "park-catchment-distance" = 2,
-  "beta5-park-group" = 0.25,
+  "beta5-park-group" = 0,
+  "beta6-roads-group" = 0.5,
   "travel-distance" = 5,
   "road-multiplier" = 1,
   "real-travel?" = FALSE,
@@ -674,5 +675,91 @@ new_experiment8 <- run_segregation_experiment(
 
 # Render the new plot
 print(new_experiment8$plot)
+```
+
+## Interventions
+
+
+
+### different road configurations
+
+```{r}
+my_path <- "C:/Users/vsesu60/OneDrive - Linköpings universitet/Documents/R/vis-soc/netlogo/roads/Segregation Utility.nlogox"
+
+custom_constants9 <- list(
+  "density-percent" = 70,
+  "%-similar-wanted" = 30,
+  "number-of-ethnicities" = 2,
+  "%-different-wanted" = 0,
+  "neighborhood-distance" = 2,
+  "venues-number" = 5,
+  "venue-catchment-distance" = 10, # Keep this static this time
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = c("isolated-communities", "city-center-suburbia", "connected-communities"),
+  "parks-number" = 3,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0,
+  "beta6-roads-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+experiment9 <- run_segregation_experiment(
+  model_path = my_path, 
+  constants = custom_constants9, 
+  repetitions = 5
+)
+
+# Render the new plot
+print(experiment9$plot)
+```
+
+fully connected communities are hight on clustering, exposure and dissimilarity, compared to a isolated and city center 
+
+### beta6-roads-group
+
+```{r}
+custom_constants11 <- list(
+  "density-percent" = 70,
+  "%-similar-wanted" = 30,
+  "number-of-ethnicities" = 2,
+  "%-different-wanted" = 0,
+  "neighborhood-distance" = 2,
+  "venues-number" = 5,
+  "venue-catchment-distance" = 10, # Keep this static this time
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = c("isolated-communities"),
+  "parks-number" = 3,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0,
+  "beta6-roads-group" = c(0, 0.5, 1),
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+experiment11 <- run_segregation_experiment(
+  model_path = my_path, 
+  constants = custom_constants11, 
+  repetitions = 5
+)
+
+# Render the new plot
+print(experiment11$plot)
 ```
 
