@@ -161,7 +161,9 @@ to setup-families
   if target-population > 0 [
     ask n-of target-population habitable-patches [
       sprout-families 1 [
-        set color (item (random number-of-ethnicities) colors)
+        ifelse random-float 100 < %-proportion-majority
+        [ set color item 0 colors ] ; Assign the first color
+        [ set color item (1 + random (number-of-ethnicities - 1)) colors ] ; Assign any other color
         set shape "person"
         set size 1.5
         set happy? true
@@ -830,7 +832,7 @@ to grow-parks
 end]]></code>
   <widgets>
     <view x="295" wrappingAllowedX="false" y="10" frameRate="30.0" minPycor="-25" height="404" showTickCounter="true" patchSize="8.0" fontSize="10" wrappingAllowedY="false" width="404" tickCounterLabel="ticks" maxPycor="25" updateMode="1" maxPxcor="25" minPxcor="-25"></view>
-    <plot x="10" autoPlotX="true" yMax="100.0" autoPlotY="true" yAxis="%" y="238" xMin="0.0" height="175" legend="false" xMax="25.0" yMin="0.0" width="249" xAxis="time" display="Percent Similar">
+    <plot x="10" autoPlotX="true" yMax="100.0" autoPlotY="true" yAxis="%" y="278" xMin="0.0" height="135" legend="false" xMax="25.0" yMin="0.0" width="249" xAxis="time" display="Percent Similar">
       <setup></setup>
       <update></update>
       <pen interval="1.0" mode="0" display="percent" color="-2674135" legend="true">
@@ -846,7 +848,7 @@ end]]></code>
         <update>plot percent-unhappy</update>
       </pen>
     </plot>
-    <slider x="15" step="10" y="62" max="100" width="225" display="density-percent" height="50" min="1" direction="Horizontal" default="71.0" variable="density-percent"></slider>
+    <slider x="15" step="10" y="62" max="100" width="225" display="density-percent" height="50" min="1" direction="Horizontal" default="61.0" variable="density-percent"></slider>
     <slider x="15" step="1.0" y="119" max="100.0" width="225" display="%-similar-wanted" height="50" min="0.0" direction="Horizontal" default="30.0" variable="%-similar-wanted" units="%"></slider>
     <button x="34" y="14" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="80" display="setup">setup</button>
     <button x="124" y="14" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="80" display="go">go</button>
@@ -881,7 +883,7 @@ plotxy utility-threshold plot-y-max</update>
     </plot>
     <monitor x="420" precision="1" y="535" height="60" fontSize="11" width="113" display="Percent Unhappy">percent-unhappy</monitor>
     <monitor x="294" precision="1" y="535" height="60" fontSize="11" width="108" display="Percent Similar">percent-similar</monitor>
-    <chooser x="480" y="670" height="60" variable="road-scenario" current="7" width="250" display="road-scenario">
+    <chooser x="480" y="670" height="60" variable="road-scenario" current="4" width="250" display="road-scenario">
       <choice type="string" value="real-norrkoping"></choice>
       <choice type="string" value="empty"></choice>
       <choice type="string" value="grid"></choice>
@@ -930,6 +932,7 @@ plotxy utility-threshold plot-y-max</update>
     <slider x="1135" step="0.1" y="125" max="1" width="192" display="beta1-neighbors" height="50" min="0" direction="Horizontal" default="0.4" variable="beta1-neighbors"></slider>
     <slider x="1135" step="0.1" y="30" max="1" width="182" display="utility-threshold" height="50" min="0" direction="Horizontal" default="0.1" variable="utility-threshold"></slider>
     <slider x="1135" step="0.1" y="400" max="1" width="250" display="beta6-roads-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta6-roads-group"></slider>
+    <slider x="15" step="1" y="230" max="100" width="250" display="%-proportion-majority" height="50" min="0" direction="Horizontal" default="80.0" variable="%-proportion-majority" units="%"></slider>
   </widgets>
   <info>## ACKNOWLEDGMENT
 

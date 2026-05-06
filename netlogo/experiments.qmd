@@ -20,7 +20,7 @@ setup_file <- create_experiment(
   run_metrics_every_step = TRUE,
   setup = "setup",
   go = "go",
-  time_limit = 200,
+  time_limit = 20,
   metrics = c(
   'index-exposure',
   'index-dissimilarity',
@@ -33,6 +33,7 @@ setup_file <- create_experiment(
     "%-similar-wanted" = 30,
     "number-of-ethnicities" = 2,
     "%-different-wanted" = 0,
+    "%-proportion-majority" = 50,
     "neighborhood-distance" = c(2),
     "venues-number" = c(5),
     "venue-catchment-distance" = c(1, 3, 10, 15),
@@ -108,55 +109,6 @@ data |>
 ```
 
 
-### function
-
-```{r}
-
-input_to_vis <- function(model_path, constrain, values = c()){
-  # function takes the model path
-  # the name of the constraint to be varied and a vector of values for that constraint
-  # it creates an experiment file and runs the experiment, returning the results as a graph
-  
-}
-```
-
-
-
-```{r}
-model_path <-
-  find_netlogo_home() |>
-  file.path(
-    "models",
-    "IABM Textbook",
-    "chapter 4",
-    "Wolf Sheep Simple 5.nlogox"
-  )
-
-setup_file <- create_experiment(
-  name = "Wolf Sheep Simple Model Analysis",
-  setup = "setup",
-  go = "go",
-  time_limit = 500,
-  run_metrics_condition = 'ticks mod 100 = 0',
-  metrics = c(
-    '[xcor] of sheep',
-    '[ycor] of sheep',
-    '[xcor] of wolves',
-    '[ycor] of wolves',
-    '[pxcor] of patches',
-    '[pycor] of patches',
-    '[pcolor] of patches'
-  ),
-  constants = list(
-    "number-of-sheep" = 100,
-    "number-of-wolves" = 15,
-    "movement-cost" = 0.5,
-    "grass-regrowth-rate" = 0.3,
-    "energy-gain-from-grass" = 2,
-    "energy-gain-from-sheep" = 5
-  )
-)
-```
 
 ```{r}
 create_experiment_template(model_path, insert_at_cursor = TRUE)
@@ -208,7 +160,7 @@ setup_file <- create_experiment(
 )
 ```
 
-### funtion 
+### function 
 
 ```{r}
 library(tidyverse)
@@ -226,6 +178,7 @@ run_segregation_experiment <- function(
     "%-similar-wanted" = 30,
     "number-of-ethnicities" = 2,
     "%-different-wanted" = 0,
+    "proportion-majority" = 50,
     "neighborhood-distance" = 2,
     "venues-number" = 5,
     "venue-catchment-distance" = 7, # Example of a tested/varying parameter
@@ -763,3 +716,40 @@ experiment11 <- run_segregation_experiment(
 print(experiment11$plot)
 ```
 
+### proportion-majority
+
+```{r}
+custom_constants12 <- list(
+  "density-percent" = 70,
+  "number-of-ethnicities" = 2,
+  "proportion-majority" = c(20, 50),
+  "neighborhood-distance" = 2,
+  "venues-number" = 5,
+  "venue-catchment-distance" = 10, # Keep this static this time
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = c("stockholm"),
+  "parks-number" = 3,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0,
+  "beta6-roads-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+experiment12 <- run_segregation_experiment(
+  model_path = model_path, 
+  constants = custom_constants12, 
+  repetitions = 5
+)
+
+# Render the new plot
+print(experiment12$plot)
+```
