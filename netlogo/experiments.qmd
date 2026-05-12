@@ -160,7 +160,9 @@ setup_file <- create_experiment(
 )
 ```
 
-### function 
+# function 
+
+## model run
 
 ```{r}
 library(tidyverse)
@@ -303,7 +305,526 @@ run_segregation_experiment <- function(
     plot = p
   ))
 }
+
+
+library(tidyverse)
+library(logolink)
+library(geomtextpath)
+
+
+
+plot_segregation_results <- function(
+  experiment_output,
+  indices_to_plot = c("index_exposure", "index_dissimilarity", "index_clustering")
+) {
+  
+  # Extract components from the experiment output
+  data <- experiment_output$data
+  constants <- experiment_output$constants
+  max_steps <- experiment_output$max_steps
+  
+  # Identify the varying parameter to dynamically color the plot
+  varying_params <- names(constants)[lengths(constants) > 1]
+  
+  if (length(varying_params) == 0) {
+    legend_title <- "run_number"
+    varying_col <- "run_number"
+  } else {
+    legend_title <- varying_params[1]
+    varying_col <- str_replace_all(legend_title, "-", "_") 
+  }
+  
+  # Build dynamic title string from all constants for the caption
+  param_strings <- imap_chr(constants, ~ paste0(.y, ": ", paste(.x, collapse = ", ")))
+  dynamic_subtitle <- str_wrap(paste(param_strings, collapse = " | "), width = 110)
+  
+  # Process data and generate the plot
+  p <- data |> 
+    filter(step <= max_steps) |> 
+    select(
+      run_number,
+      step,
+      starts_with("index_"),
+      all_of(varying_col) 
+    ) |> 
+    pivot_longer(
+      cols = starts_with("index_"),
+      names_to = "index",
+      values_to = "value"
+    ) |> 
+    filter(index %in% indices_to_plot) |>
+    mutate(
+      grouping_combo_run = str_c(run_number, index, .data[[varying_col]]),
+      index_label = str_remove(index, "index_") 
+    ) |> 
+    ggplot(aes(
+      x = step, 
+      y = value, 
+      color = factor(.data[[varying_col]]), 
+      group = grouping_combo_run, 
+      linetype = index_label
+    )) +
+    geom_line(alpha = 0.25) +
+    geomtextpath::geom_textpath(
+      aes(group = index_label, label = index_label), 
+      offset = unit(5, "pt"), 
+      gap = TRUE, 
+      text_smoothing = 90,
+      color = "gray20"
+    ) +
+    labs(
+      title = "Segregation Indices Over Time",
+      subtitle = varying_col, 
+      caption  = dynamic_subtitle,
+      x = "Step", 
+      y = "Index Value", 
+      color = legend_title,
+      linetype = "Index"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",
+      plot.subtitle = element_text(size = 11, color = "gray20", margin = margin(b = 10)),
+      plot.caption = element_text(size = 7, color = "gray50", hjust = 0, margin = margin(t = 15))
+    ) +
+    guides(linetype = "none")
+  
+  return(p)
+}
+
+library(tidyverse)
+library(logolink)
+library(geomtextpath)
+library(colorspace) # Required for lightening the venue colors
+
+library(tidyverse)
+library(logolink)
+library(geomtextpath)
+library(colorspace) 
+
+run_segregation_model <- function(
+  model_path,
+  repetitions = 3,
+  max_steps = 100,
+  capture_spatial = FALSE, 
+  constants = list(
+    "density-percent" = 70,
+    "%-similar-wanted" = 30,
+    "number-of-ethnicities" = 2,
+    "%-different-wanted" = 0,
+    "proportion-majority" = 50,
+    "neighborhood-distance" = 2,
+    "venues-number" = 5,
+    "venue-catchment-distance" = 7, 
+    "venue-exclusivity" = 1,
+    "utility-threshold" = 0.1,
+    "beta1-neighbors" = 0.5,
+    "beta2-venue-group" = 0.5,
+    "beta3-venue-loc" = 0,
+    "beta4-home-venues" = 0,
+    "road-scenario" = "empty",
+    "parks-number" = 3,
+    "park-catchment-distance" = 2,
+    "beta5-park-group" = 0.25,
+    "travel-distance" = 5,
+    "road-multiplier" = 1,
+    "real-travel?" = FALSE,
+    "random-seed?" = FALSE
+  )
+) {
+  
+  base_metrics <- c(
+    'index-exposure',
+    'index-dissimilarity',
+    'index-clustering',
+    'index-centrality',
+    'index-concentration'
+  )
+  
+  spatial_metrics <- c(
+    '[pxcor] of patches',
+    '[pycor] of patches',
+    '[pcolor] of patches',
+    '[is-road?] of patches',
+    '[is-river?] of patches',
+    '[xcor] of families',
+    '[ycor] of families',
+    '[color] of families',
+    '[xcor] of venues',
+    '[ycor] of venues',
+    '[color] of venues'
+  )
+  
+  metrics_to_run <- if (capture_spatial) c(base_metrics, spatial_metrics) else base_metrics
+  outputs_to_run <- if (capture_spatial) c("table", "lists") else c("table")
+  
+  setup_file <- create_experiment(
+    name = "Venue Segregation Model Analysis",
+    repetitions = repetitions,
+    run_metrics_every_step = TRUE,
+    setup = "setup",
+    go = "go",
+    time_limit = max_steps + 50, 
+    metrics = metrics_to_run,
+    constants = constants
+  )
+  
+  results <- model_path |> run_experiment(setup_file = setup_file, output = outputs_to_run)
+  
+  # -- NEW: Memory Optimization --
+  # Identify constants that do NOT change (length == 1) to remove from outputs
+  static_params <- names(constants)[lengths(constants) == 1]
+  # Convert NetLogo parameter syntax to R column syntax
+  static_cols <- str_replace_all(static_params, "-", "_")
+  
+  # Clean up the table output
+  data_out <- results[["table"]]
+  if (!is.null(data_out)) {
+    cols_to_remove <- intersect(static_cols, names(data_out))
+    data_out <- data_out |> select(-all_of(cols_to_remove))
+  }
+  
+  # Clean up the lists output
+  lists_out <- if (capture_spatial) results[["lists"]] else NULL
+  if (!is.null(lists_out)) {
+    cols_to_remove <- intersect(static_cols, names(lists_out))
+    lists_out <- lists_out |> select(-all_of(cols_to_remove))
+  }
+  
+  return(list(
+    data = data_out,
+    lists = lists_out,
+    constants = constants,
+    max_steps = max_steps
+  ))
+}
+
+
+plot_segregation_world <- function(experiment_output, step_to_plot = 100, run_to_plot = 1) {
+  
+  if (is.null(experiment_output$lists)) {
+    stop("Spatial data is missing. You must run `run_segregation_model()` with `capture_spatial = TRUE`.")
+  }
+  
+  list_data <- experiment_output$lists |>
+    filter(step == step_to_plot, run_number == run_to_plot)
+  
+  if (nrow(list_data) == 0) {
+    stop("No data found for step ", step_to_plot, " in run ", run_to_plot)
+  }
+
+  # 1. Extract, clean, and parse patches safely
+  patches <- list_data |>
+    select(run_number, step, ends_with("_of_patches")) |>
+    unnest(cols = ends_with("_of_patches")) |>
+    rename_with(~ str_remove(.x, "_of_patches")) |>
+    rename_with(~ str_replace_all(.x, "[\\?\\-]", "_")) |> 
+    mutate(
+      pcolor = parse_netlogo_color(as.numeric(pcolor)),
+      pxcor = as.numeric(pxcor),
+      pycor = as.numeric(pycor)
+    )
+
+  # Safely handle missing/empty road and river data
+  if (!"is_road_" %in% names(patches)) patches$is_road_ <- FALSE
+  if (!"is_river_" %in% names(patches)) patches$is_river_ <- FALSE
+
+  # Apply patch color overrides
+  patches <- patches |>
+    mutate(
+      is_road_ = as.logical(is_road_),
+      is_river_ = as.logical(is_river_),
+      render_color = case_when(
+        is_river_ ~ "#4682B4", # Steel Blue
+        is_road_ ~ "#333333",  # Dark Gray
+        TRUE ~ pcolor
+      )
+    )
+
+  # 2. Extract and parse families
+  families <- list_data |>
+    select(run_number, step, ends_with("_of_families")) |>
+    unnest(cols = ends_with("_of_families")) |>
+    rename_with(~ str_remove(.x, "_of_families")) |>
+    mutate(
+      color = parse_netlogo_color(as.numeric(color)),
+      xcor = as.numeric(xcor),
+      ycor = as.numeric(ycor)
+    )
+
+  # 3. Extract venues and check if they exist
+  venue_cols <- names(list_data)[str_detect(names(list_data), "_of_venues$")]
+  has_venues <- FALSE
+  
+  if (length(venue_cols) > 0) {
+    venues <- list_data |>
+      select(run_number, step, all_of(venue_cols)) |>
+      unnest(cols = all_of(venue_cols))
+    
+    # Only process if unnesting resulted in actual rows
+    if (nrow(venues) > 0) {
+      has_venues <- TRUE
+      venues <- venues |>
+        rename_with(~ str_remove(.x, "_of_venues")) |>
+        mutate(
+          base_color = parse_netlogo_color(as.numeric(color)),
+          fill_color = colorspace::lighten(base_color, amount = 0.3),
+          xcor = as.numeric(xcor),
+          ycor = as.numeric(ycor)
+        )
+    }
+  }
+
+  # 4. Generate the baseline plot (Environment + Families)
+  p <- ggplot() +
+    geom_tile(data = patches, aes(x = pxcor, y = pycor, fill = render_color), alpha = 0.7) +
+    geom_point(data = families, aes(x = xcor, y = ycor, color = color), shape = 15, size = 1.9) +
+    scale_fill_identity() + 
+    scale_color_identity() + 
+    coord_equal() +
+    theme_void() +
+    labs(
+      title = "NetLogo World State",
+      subtitle = paste("Run:", run_to_plot, "| Step:", step_to_plot)
+    ) +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5, color = "gray40")
+    )
+
+  # 5. Conditionally overlay Venues if they exist
+  if (has_venues) {
+    p <- p + geom_point(
+      data = venues,
+      aes(x = xcor, y = ycor, fill = fill_color),
+      shape = 24,      
+      color = "white", 
+      size = 3.5,      
+      stroke = 1     
+    )
+  }
+
+  return(p)
+}
+
+library(patchwork) # Required for side-by-side ggplot arrangement
+
+compare_segregation_runs <- function(
+  experiment_output, 
+  runs_to_compare = c(1, 2, 3), 
+  step_to_plot = 100,
+  ncol = NULL # Let patchwork decide the layout, or force a specific number of columns
+) {
+  
+  # Guard: Check if spatial data was captured
+  if (is.null(experiment_output$lists)) {
+    stop("Spatial data is missing. You must run `run_segregation_model()` with `capture_spatial = TRUE`.")
+  }
+  
+  # Check which runs actually exist in the data to prevent errors
+  available_runs <- unique(experiment_output$lists$run_number)
+  valid_runs <- intersect(runs_to_compare, available_runs)
+  
+  if (length(valid_runs) == 0) {
+    stop("None of the requested runs exist in the experiment output.")
+  }
+  if (length(valid_runs) < length(runs_to_compare)) {
+    warning("Some requested runs were not found and will be skipped.")
+  }
+  
+  # Generate a list of plots using the existing plot_segregation_world function
+  plot_list <- map(valid_runs, function(run_num) {
+    
+    # Generate the base plot
+    p <- plot_segregation_world(
+      experiment_output = experiment_output, 
+      step_to_plot = step_to_plot, 
+      run_to_plot = run_num
+    )
+    
+    # Tweak the titles so they look cleaner side-by-side
+    p <- p + 
+      labs(title = paste("Run:", run_num)) + # Overwrite main title to save space
+      theme(
+        plot.title = element_text(size = 12, face = "bold"),
+        plot.subtitle = element_blank() # Remove redundant subtitle
+      )
+    
+    return(p)
+  })
+  
+  # Combine them into a single side-by-side layout using patchwork
+  combined_plot <- wrap_plots(plot_list, ncol = ncol) +
+    plot_annotation(
+      title = "Cross-Run Spatial Comparison",
+      subtitle = paste("Step:", step_to_plot),
+      theme = theme(
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+        plot.subtitle = element_text(hjust = 0.5, color = "gray40", size = 12)
+      )
+    )
+  
+  return(combined_plot)
+}
 ```
+
+
+## animations
+
+```{r}
+library(tidyverse)
+library(logolink)
+library(colorspace)
+library(magick)
+
+animate_segregation_world <- function(
+  experiment_output, 
+  run_to_animate = 1, 
+  fps = 10, 
+  output_filename = "segregation_animation.gif"
+) {
+  
+  if (is.null(experiment_output$lists)) {
+    stop("Spatial data is missing. You must run `run_segregation_model()` with `capture_spatial = TRUE`.")
+  }
+  
+  # 1. Isolate the specific run
+  list_data <- experiment_output$lists |>
+    filter(run_number == run_to_animate)
+  
+  if (nrow(list_data) == 0) {
+    stop("No data found for run ", run_to_animate)
+  }
+  
+  message("Pre-processing spatial data for animation...")
+  
+  # 2. Extract and parse all PATCHES across all steps
+  all_patches <- list_data |>
+    select(step, ends_with("_of_patches")) |>
+    unnest(cols = ends_with("_of_patches")) |>
+    rename_with(~ str_remove(.x, "_of_patches")) |>
+    rename_with(~ str_replace_all(.x, "[\\?\\-]", "_")) |> 
+    mutate(
+      pcolor = parse_netlogo_color(as.numeric(pcolor)),
+      pxcor = as.numeric(pxcor),
+      pycor = as.numeric(pycor)
+    )
+  
+  if (!"is_road_" %in% names(all_patches)) all_patches$is_road_ <- FALSE
+  if (!"is_river_" %in% names(all_patches)) all_patches$is_river_ <- FALSE
+  
+  all_patches <- all_patches |>
+    mutate(
+      is_road_ = as.logical(is_road_),
+      is_river_ = as.logical(is_river_),
+      render_color = case_when(
+        is_river_ ~ "#4682B4", 
+        is_road_ ~ "#333333",  
+        TRUE ~ pcolor
+      )
+    )
+  
+  # 3. Extract and parse all FAMILIES across all steps
+  all_families <- list_data |>
+    select(step, ends_with("_of_families")) |>
+    unnest(cols = ends_with("_of_families")) |>
+    rename_with(~ str_remove(.x, "_of_families")) |>
+    mutate(
+      color = parse_netlogo_color(as.numeric(color)),
+      xcor = as.numeric(xcor),
+      ycor = as.numeric(ycor)
+    )
+  
+  # 4. Extract and parse all VENUES across all steps
+  venue_cols <- names(list_data)[str_detect(names(list_data), "_of_venues$")]
+  has_venues <- FALSE
+  if (length(venue_cols) > 0) {
+    all_venues <- list_data |>
+      select(step, all_of(venue_cols)) |>
+      unnest(cols = all_of(venue_cols))
+    
+    if (nrow(all_venues) > 0) {
+      has_venues <- TRUE
+      all_venues <- all_venues |>
+        rename_with(~ str_remove(.x, "_of_venues")) |>
+        mutate(
+          base_color = parse_netlogo_color(as.numeric(color)),
+          fill_color = colorspace::lighten(base_color, amount = 0.3),
+          xcor = as.numeric(xcor),
+          ycor = as.numeric(ycor)
+        )
+    }
+  }
+
+  # 5. Setup Temporary Directory for Frames
+  frames_dir <- file.path(tempdir(), "netlogo_frames")
+  if (!dir.exists(frames_dir)) dir.create(frames_dir)
+  
+  # Clear old frames if they exist from a previous run
+  unlink(list.files(frames_dir, full.names = TRUE))
+  
+  steps <- sort(unique(list_data$step))
+  frame_files <- character(length(steps))
+  
+  message(sprintf("Rendering %d frames. This may take a moment...", length(steps)))
+  
+  # 6. Render Loop
+  for (i in seq_along(steps)) {
+    current_step <- steps[i]
+    
+    # Subset data for this exact step
+    step_patches <- all_patches |> filter(step == current_step)
+    step_families <- all_families |> filter(step == current_step)
+    
+    p <- ggplot() +
+      geom_raster(data = step_patches, aes(x = pxcor, y = pycor, fill = render_color)) +
+      geom_point(data = step_families, aes(x = xcor, y = ycor, color = color), shape = 15, size = 2) +
+      scale_fill_identity() + 
+      scale_color_identity() + 
+      coord_equal() +
+      theme_void() +
+      labs(
+        title = "NetLogo World State",
+        subtitle = sprintf("Run: %d | Step: %03d", run_to_animate, current_step)
+      ) +
+      theme(
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, color = "gray40", family = "mono") # Mono prevents title jitter
+      )
+    
+    if (has_venues) {
+      step_venues <- all_venues |> filter(step == current_step)
+      if (nrow(step_venues) > 0) {
+        p <- p + geom_point(
+          data = step_venues,
+          aes(x = xcor, y = ycor, fill = fill_color),
+          shape = 24, color = "black", size = 3.5, stroke = 0.8     
+        )
+      }
+    }
+    
+    # Save the frame
+    # Using %03d ensures frames are sorted correctly (e.g., frame_001.png)
+    frame_name <- file.path(frames_dir, sprintf("frame_%03d.png", i))
+    ggsave(filename = frame_name, plot = p, width = 6, height = 6, dpi = 150, bg = "white")
+    frame_files[i] <- frame_name
+  }
+  
+  message("Compiling GIF...")
+  
+  # 7. Compile and save the GIF using Magick
+  animation <- magick::image_read(frame_files) |>
+    magick::image_animate(fps = fps, dispose = "previous")
+  
+  magick::image_write(animation, output_filename)
+  
+  message(sprintf("Success! Animation saved to: %s", normalizePath(output_filename)))
+  
+  # Return the magick object so it can be viewed directly in the RStudio Viewer pane
+  return(animation)
+}
+```
+
 
 ## trashold uttility (does not work. should not work)
 
@@ -718,6 +1239,8 @@ print(experiment11$plot)
 
 ### proportion-majority
 
+
+
 ```{r}
 custom_constants12 <- list(
   "density-percent" = 70,
@@ -753,3 +1276,306 @@ experiment12 <- run_segregation_experiment(
 # Render the new plot
 print(experiment12$plot)
 ```
+it is hard to get exposure when your can't find any minorities
+
+
+### intervention-scenario
+
+#### central-park
+
+central parks does nothing???
+
+```{r}
+custom_constants13 <- list(
+  "density-percent" = 70,
+  "number-of-ethnicities" = 2,
+  "proportion-majority" = 50,
+  "neighborhood-distance" = 2,
+  "venues-number" = 10,
+  "venue-catchment-distance" = 10, # Keep this static this time
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = c("empty"),
+  "intervention-scenario" = c("none", "central-park"),
+  "parks-number" = 3,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.5,
+  "beta6-roads-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+experiment13 <- run_segregation_experiment(
+  model_path = model_path, 
+  constants = custom_constants13, 
+  repetitions = 5,
+  indices_to_plot = c("index_exposure", "index_dissimilarity", "index_concentration")
+)
+
+# Render the new plot
+print(experiment13$plot)
+```
+
+#### mixed-grid
+
+mixed grid of parks increases segregation, since there is no need to move and everything is around.
+
+```{r}
+custom_constants13 <- list(
+  "density-percent" = 70,
+  "number-of-ethnicities" = 2,
+  "proportion-majority" = 50,
+  "neighborhood-distance" = 2,
+  "venues-number" = 10,
+  "venue-catchment-distance" = 10, # Keep this static this time
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = c("empty"),
+  "intervention-scenario" = c("none", "mixed-grid"),
+  "parks-number" = 0,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.5,
+  "beta6-roads-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+experiment13 <- run_segregation_model(
+  capture_spatial = T,
+  model_path = model_path, 
+  constants = custom_constants13, 
+  repetitions = 5,
+  max_steps = 100
+)
+
+# Render the new plot
+experiment13 |> 
+  plot_segregation_results()
+
+experiment13 |> plot_segregation_world(
+  step_to_plot = 100, 
+  run_to_plot = 1
+)
+
+experiment13 |> compare_segregation_runs(
+  runs_to_compare = c(1, 2, 6, 7),
+  step_to_plot = 100,
+  ncol = 2 # Forces them into a single horizontal row
+)
+
+my_gif <- animate_segregation_world(
+  experiment_output = experiment13,
+  run_to_animate = 6,
+  fps = 10,  # 10 frames per second means a 100-step run takes 10 seconds to watch
+  output_filename = "run_2_mixed-grid.gif"
+)
+```
+
+
+#### "majority-spread-minority-hubs"
+
+"majority-spread-minority-hubs" there are not consequences when proportion is equal
+
+```{r}
+custom_constants13 <- list(
+  "density-percent" = 70,
+  "number-of-ethnicities" = 2,
+  "proportion-majority" = 50,
+  "neighborhood-distance" = 2,
+  "venues-number" = 10,
+  "venue-catchment-distance" = 10, # Keep this static this time
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = c("empty"),
+  "intervention-scenario" = c("none", "majority-spread-minority-hubs"),
+  "parks-number" = 3,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.5,
+  "beta6-roads-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+experiment13 <- run_segregation_experiment(
+  model_path = model_path, 
+  constants = custom_constants13, 
+  repetitions = 5
+)
+
+# Render the new plot
+print(experiment13$plot)
+
+
+custom_constants14 <- list(
+  "density-percent" = 70,
+  "number-of-ethnicities" = 2,
+  "proportion-majority" = 80,
+  "neighborhood-distance" = 2,
+  "venues-number" = 10,
+  "venue-catchment-distance" = 10, # Keep this static this time
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = c("empty"),
+  "intervention-scenario" = c("none", "majority-spread-minority-hubs"),
+  "parks-number" = 3,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.5,
+  "beta6-roads-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+experiment14 <- run_segregation_experiment(
+  model_path = model_path, 
+  constants = custom_constants14, 
+  repetitions = 5
+)
+
+# Render the new plot
+print(experiment13$plot) 
+print(experiment14$plot)
+```
+
+### "integrated-venues"
+
+```{r}
+custom_constants13 <- list(
+  "density-percent" = 70,
+  "number-of-ethnicities" = 2,
+  "proportion-majority" = 50,
+  "neighborhood-distance" = 2,
+  "venues-number" = 10,
+  "venue-catchment-distance" = 10, # Keep this static this time
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = c("empty"),
+  "intervention-scenario" = c("none", "integrated-venues"),
+  "parks-number" = 3,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.5,
+  "beta6-roads-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+# Run with custom parameters
+experiment13 <- run_segregation_experiment(
+  
+  model_path = model_path, 
+  constants = custom_constants13, 
+  repetitions = 10,
+  max_steps = 150
+)
+
+# Render the new plot
+print(experiment13$plot)
+```
+
+## Add world plots
+
+```{r}
+custom_constants13 <- list(
+  "density-percent" = 70,
+  "number-of-ethnicities" = 2,
+  "proportion-majority" = 50,
+  "neighborhood-distance" = 2,
+  "venues-number" = 10,
+  "venue-catchment-distance" = 10, # Keep this static this time
+  "venue-exclusivity" = 1,
+  "utility-threshold" = 0.5,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "road-scenario" = c("empty"),
+  "intervention-scenario" = c("none", "integrated-venues"),
+  "parks-number" = 3,
+  "park-catchment-distance" = 2,
+  "beta5-park-group" = 0.5,
+  "beta6-roads-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "real-travel?" = FALSE,
+  "random-seed?" = FALSE
+)
+
+experiment13 <- run_segregation_model(
+  capture_spatial = T,
+    model_path = model_path, 
+  constants = custom_constants13, 
+  repetitions = 3,
+  max_steps = 150
+)
+
+experiment13 |> 
+  plot_segregation_results()
+
+experiment13 |> plot_segregation_world(
+  step_to_plot = 12, 
+  run_to_plot = 6
+)
+```
+
+
+### Animation, mostly for fun
+
+
+```{r}
+my_gif <- animate_segregation_world(
+  experiment_output = experiment13,
+  run_to_animate = 1,
+  fps = 10,  # 10 frames per second means a 100-step run takes 10 seconds to watch
+  output_filename = "run_1_segregation.gif"
+)
+```
+
+
+### multiple worlds
+
+```{r}
+#| warning: false
+library(tidyverse)
+
+
+
+experiment13 |> compare_segregation_runs(
+  runs_to_compare = c(1, 2, 4, 5),
+  step_to_plot = 100,
+  ncol = 2 # Forces them into a single horizontal row
+)
+```
+

@@ -95,6 +95,7 @@ to setup
   ;; We wrap this in no-display to speed up the drawing process
   no-display
   draw-selected-scenario
+
   
   ;; 4. Cache Habitable Patches
   ifelse road-scenario = "real-norrkoping" and file-exists? "buildings.shp" [
@@ -107,6 +108,8 @@ to setup
   setup-parks
   setup-venues
   setup-families
+  
+    apply-intervention-scenario
 
   evaluate-venues-and-parks 
   update-families
@@ -356,6 +359,183 @@ to load-gis-logic [ dataset ]
       if not is-river? [ set is-road? true ]
     ]
   ]
+end
+
+
+to apply-intervention-scenario
+  (ifelse
+    intervention-scenario = "none" [
+      ;; Do nothing. Keeps the default randomly distributed setup from setup-parks and setup-venues.
+    ]
+
+    intervention-scenario = "central-park" [
+      ;; Wipes out existing scattered parks and places one massive park in the city center
+      ask parks [ die ]
+      ask patches with [is-green?] [
+        if not is-road? and not is-river? [ set pcolor black ]
+        set is-green? false
+        set my-park-id nobody
+      ]
+      
+      create-parks 1 [
+        set shape "tree"
+        set color green
+        set size 4
+        move-to patch 0 0
+        ;; The park radius scales with the world size
+        set my-patches (patches in-radius (max-pxcor / 3)) with [not is-road? and not is-river?]
+        ask my-patches [
+          set pcolor green + 2
+          set is-green? true
+          set my-park-id [who] of myself
+        ]
+        set my-attendees (turtle-set nobody)
+      ]
+    ]
+
+    intervention-scenario = "venue-hubs" [
+      ;; Restructures randomized venues into 4 dense, competitive 'destination hubs'
+      let q-x floor (max-pxcor / 2)
+      let q-y floor (max-pycor / 2)
+      let hub-centers (list patch (- q-x) (- q-y) patch q-x (- q-y) patch (- q-x) q-y patch q-x q-y)
+      
+      let i 0
+      ask venues [
+        let target-hub item (i mod 4) hub-centers
+        let possible-spots (patches in-radius 5) with [member? self habitable-patches]
+        ifelse any? possible-spots [
+          move-to one-of possible-spots
+        ] [
+          move-to target-hub
+        ]
+        set i i + 1
+      ]
+    ]
+
+    intervention-scenario = "bridge-parks" [
+      ;; Cleans scattered parks and intentionally builds parks over rivers to bridge divided communities
+      ask parks [ die ]
+      ask patches with [is-green?] [
+        if not is-road? and not is-river? [ set pcolor black ]
+        set is-green? false
+        set my-park-id nobody
+      ]
+
+      let river-patches patches with [is-river?]
+      if any? river-patches [
+        ;; Finds intersections to build park bridges across water
+        ask river-patches with [(pxcor mod 8 = 0) and (pycor mod 8 = 0)] [
+          sprout-parks 1 [
+            set shape "tree"
+            set color green
+            set size 2
+            set my-patches (patches in-radius 2)
+            ask my-patches [
+              set pcolor green + 2
+              set is-green? true
+              set is-river? false ;; The park destroys the river block, acting as a bridge!
+              set my-park-id [who] of myself
+            ]
+            set my-attendees (turtle-set nobody)
+          ]
+        ]
+      ]
+    ]
+
+    intervention-scenario = "mixed-grid" [
+      ;; Deletes random generation and forces a strict alternating grid of parks and venues
+      ask parks [ die ]
+      ask patches with [is-green?] [
+         if not is-road? and not is-river? [ set pcolor black ]
+         set is-green? false
+         set my-park-id nobody
+      ]
+      ask venues [ die ]
+
+      let spacing 8
+      
+      ;; Grid Parks
+      ask patches with [pxcor mod spacing = 0 and pycor mod spacing = 0 and member? self habitable-patches] [
+        sprout-parks 1 [
+          set shape "tree"
+          set color green
+          set size 2
+          set my-patches (patches in-radius 1.5) with [not is-road? and not is-river?]
+          ask my-patches [
+            set pcolor green + 2
+            set is-green? true
+            set my-park-id [who] of myself
+          ]
+          set my-attendees (turtle-set nobody)
+        ]
+      ]
+      
+      ;; Grid Venues offset by half spacing
+      ask patches with [(pxcor + (spacing / 2)) mod spacing = 0 and (pycor + (spacing / 2)) mod spacing = 0 and member? self habitable-patches] [
+        sprout-venues 1 [
+          set shape "house"
+          set color (item (random number-of-ethnicities) colors)
+          set size 2
+          set my-venue-exclusivity venue-exclusivity
+          set my-venue-obligatoriness 1
+          set my-attendees (turtle-set nobody)
+        ]
+      ]
+    ]
+    
+    intervention-scenario = "majority-spread-minority-hubs" [
+      ;; The majority (red, item 0) is spread out, while minorities are placed in 2 dense hubs
+      let majority-color item 0 colors
+      let q-x floor (max-pxcor / 2)
+      let minority-hubs (list patch (- q-x) 0 patch q-x 0)
+      
+      let i 0
+      ask venues [
+        ifelse color = majority-color [
+          let possible-spots habitable-patches
+          if any? possible-spots [ move-to one-of possible-spots ]
+        ] [
+          let target-hub item (i mod 2) minority-hubs
+          let possible-spots ([patches in-radius 5] of target-hub) with [member? self habitable-patches]
+          ifelse any? possible-spots [
+            move-to one-of possible-spots
+          ] [
+            move-to target-hub
+          ]
+          set i i + 1
+        ]
+      ]
+    ]
+
+    intervention-scenario = "integrated-venues" [
+      ;; Group venues into diverse clusters to maximize inter-group exposure
+      let num-colors length colors
+      let num-clusters ceiling (count venues / num-colors)
+      
+      let actual-clusters num-clusters
+      if actual-clusters > count habitable-patches [ set actual-clusters count habitable-patches ]
+      
+      if actual-clusters > 0 [
+        let cluster-centers [self] of n-of actual-clusters habitable-patches
+        
+        foreach colors [ c ->
+          let venues-of-color venues with [color = c]
+          let i 0
+          ask venues-of-color [
+            let target-center item (i mod actual-clusters) cluster-centers
+            let possible-spots ([patches in-radius 3] of target-center) with [member? self habitable-patches]
+            ifelse any? possible-spots [
+              move-to one-of possible-spots
+            ] [
+              move-to target-center
+            ]
+            set i i + 1
+          ]
+        ]
+      ]
+    ]
+    
+  )
 end
 
 ;; --- LOGIC UPDATES ---
@@ -831,7 +1011,7 @@ to grow-parks
   ]
 end]]></code>
   <widgets>
-    <view x="295" wrappingAllowedX="false" y="10" frameRate="30.0" minPycor="-25" height="404" showTickCounter="true" patchSize="8.0" fontSize="10" wrappingAllowedY="false" width="404" tickCounterLabel="ticks" maxPycor="25" updateMode="1" maxPxcor="25" minPxcor="-25"></view>
+    <view x="295" wrappingAllowedX="false" y="10" frameRate="30.0" minPycor="-25" height="400" showTickCounter="true" patchSize="8.0" fontSize="10" wrappingAllowedY="false" width="400" tickCounterLabel="ticks" maxPycor="25" updateMode="1" maxPxcor="25" minPxcor="-25"></view>
     <plot x="10" autoPlotX="true" yMax="100.0" autoPlotY="true" yAxis="%" y="278" xMin="0.0" height="135" legend="false" xMax="25.0" yMin="0.0" width="249" xAxis="time" display="Percent Similar">
       <setup></setup>
       <update></update>
@@ -848,15 +1028,15 @@ end]]></code>
         <update>plot percent-unhappy</update>
       </pen>
     </plot>
-    <slider x="15" step="10" y="62" max="100" width="225" display="density-percent" height="50" min="1" direction="Horizontal" default="61.0" variable="density-percent"></slider>
+    <slider x="15" step="10" y="62" max="100" width="225" display="density-percent" height="50" min="1" direction="Horizontal" default="51.0" variable="density-percent"></slider>
     <slider x="15" step="1.0" y="119" max="100.0" width="225" display="%-similar-wanted" height="50" min="0.0" direction="Horizontal" default="30.0" variable="%-similar-wanted" units="%"></slider>
     <button x="34" y="14" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="80" display="setup">setup</button>
     <button x="124" y="14" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="80" display="go">go</button>
     <slider x="35" step="1" y="605" max="5" width="192" display="number-of-ethnicities" height="50" min="2" direction="Horizontal" default="2.0" variable="number-of-ethnicities"></slider>
     <slider x="15" step="1" y="176" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
-    <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="5.0" variable="neighborhood-distance"></slider>
-    <slider x="815" step="1" y="15" max="10" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="0.0" variable="venues-number"></slider>
-    <slider x="815" step="1" y="103" max="20" width="173" display="venue-catchment-distance" height="50" min="0" direction="Horizontal" default="5.0" variable="venue-catchment-distance"></slider>
+    <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="2.0" variable="neighborhood-distance"></slider>
+    <slider x="815" step="1" y="15" max="20" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="9.0" variable="venues-number"></slider>
+    <slider x="815" step="1" y="103" max="20" width="173" display="venue-catchment-distance" height="50" min="0" direction="Horizontal" default="10.0" variable="venue-catchment-distance"></slider>
     <slider x="815" step="0.1" y="178" max="1" width="222" display="venue-exclusivity" height="50" min="0.0" direction="Horizontal" default="1.0" variable="venue-exclusivity"></slider>
     <chooser x="815" y="316" height="60" variable="new-venue-color" current="0" width="157" display="new-venue-color">
       <choice type="double" value="15.0"></choice>
@@ -867,7 +1047,7 @@ end]]></code>
     </chooser>
     <button x="815" y="471" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="217">place-temporary-venue</button>
     <button x="810" y="528" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="237">confirm-venue-placement</button>
-    <slider x="1135" step="0.1" y="179" max="1" width="212" display="beta2-venue-group" height="50" min="0" direction="Horizontal" default="0.0" variable="beta2-venue-group"></slider>
+    <slider x="1135" step="0.1" y="179" max="1" width="212" display="beta2-venue-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta2-venue-group"></slider>
     <plot x="1100" autoPlotX="true" yMax="10.0" autoPlotY="true" y="480" xMin="0.0" height="175" legend="false" xMax="1.0" yMin="0.0" width="230" display="utility">
       <setup></setup>
       <update></update>
@@ -883,7 +1063,7 @@ plotxy utility-threshold plot-y-max</update>
     </plot>
     <monitor x="420" precision="1" y="535" height="60" fontSize="11" width="113" display="Percent Unhappy">percent-unhappy</monitor>
     <monitor x="294" precision="1" y="535" height="60" fontSize="11" width="108" display="Percent Similar">percent-similar</monitor>
-    <chooser x="480" y="670" height="60" variable="road-scenario" current="4" width="250" display="road-scenario">
+    <chooser x="480" y="670" height="60" variable="road-scenario" current="1" width="250" display="road-scenario">
       <choice type="string" value="real-norrkoping"></choice>
       <choice type="string" value="empty"></choice>
       <choice type="string" value="grid"></choice>
@@ -895,7 +1075,7 @@ plotxy utility-threshold plot-y-max</update>
     </chooser>
     <slider x="805" step="1" y="625" max="10" width="250" display="parks-number" height="50" min="0" direction="Horizontal" default="0.0" variable="parks-number"></slider>
     <slider x="810" step="1" y="685" max="20" width="250" display="park-catchment-distance" height="50" min="0" direction="Horizontal" default="2.0" variable="park-catchment-distance"></slider>
-    <slider x="205" step="1" y="675" max="20" width="250" display="travel-distance" height="50" min="0" direction="Horizontal" default="2.0" variable="travel-distance"></slider>
+    <slider x="205" step="1" y="675" max="20" width="250" display="travel-distance" height="50" min="0" direction="Horizontal" default="5.0" variable="travel-distance"></slider>
     <slider x="205" step="1" y="730" max="10" width="250" display="road-multiplier" height="50" min="0" direction="Horizontal" default="3.0" variable="road-multiplier"></slider>
     <switch x="125" y="710" height="40" on="false" variable="real-travel?" width="90" display="real-travel?"></switch>
     <button x="705" y="470" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="100">draw-roads</button>
@@ -928,11 +1108,20 @@ plotxy utility-threshold plot-y-max</update>
     <switch x="295" y="450" height="40" on="false" variable="random-seed?" width="110" display="random-seed?"></switch>
     <slider x="1135" step="0.1" y="235" max="1" width="187" display="beta3-venue-loc" height="50" min="0" direction="Horizontal" default="0.0" variable="beta3-venue-loc"></slider>
     <slider x="1135" step="0.1" y="290" max="1" width="217" display="beta4-home-venues" height="50" min="0" direction="Horizontal" default="0.0" variable="beta4-home-venues"></slider>
-    <slider x="1135" step="0.1" y="345" max="1" width="250" display="beta5-park-group" height="50" min="0" direction="Horizontal" default="0.0" variable="beta5-park-group"></slider>
+    <slider x="1135" step="0.1" y="345" max="1" width="250" display="beta5-park-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta5-park-group"></slider>
     <slider x="1135" step="0.1" y="125" max="1" width="192" display="beta1-neighbors" height="50" min="0" direction="Horizontal" default="0.4" variable="beta1-neighbors"></slider>
     <slider x="1135" step="0.1" y="30" max="1" width="182" display="utility-threshold" height="50" min="0" direction="Horizontal" default="0.1" variable="utility-threshold"></slider>
     <slider x="1135" step="0.1" y="400" max="1" width="250" display="beta6-roads-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta6-roads-group"></slider>
-    <slider x="15" step="1" y="230" max="100" width="250" display="proportion-majority" height="50" min="0" direction="Horizontal" default="80.0" variable="proportion-majority" units="%"></slider>
+    <slider x="15" step="1" y="230" max="100" width="250" display="proportion-majority" height="50" min="0" direction="Horizontal" default="50.0" variable="proportion-majority" units="%"></slider>
+    <chooser x="480" y="735" height="60" variable="intervention-scenario" current="4" width="250" display="intervention-scenario">
+      <choice type="string" value="none"></choice>
+      <choice type="string" value="central-park"></choice>
+      <choice type="string" value="venue-hubs"></choice>
+      <choice type="string" value="bridge-parks"></choice>
+      <choice type="string" value="mixed-grid"></choice>
+      <choice type="string" value="majority-spread-minority-hubs"></choice>
+      <choice type="string" value="integrated-venues"></choice>
+    </chooser>
   </widgets>
   <info>## ACKNOWLEDGMENT
 
