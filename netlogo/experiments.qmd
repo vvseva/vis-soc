@@ -160,13 +160,8 @@ setup_file <- create_experiment(
 )
 ```
 
-<<<<<<< HEAD
 # function 
 
-## model run
-=======
-### function 
->>>>>>> debb97bc0d7fe3c8aa58ace88519037ed29466d0
 
 ```{r}
 library(tidyverse)
@@ -1243,47 +1238,6 @@ print(experiment11$plot)
 
 ### proportion-majority
 
-<<<<<<< HEAD
-
-
-=======
->>>>>>> debb97bc0d7fe3c8aa58ace88519037ed29466d0
-```{r}
-custom_constants12 <- list(
-  "density-percent" = 70,
-  "number-of-ethnicities" = 2,
-  "proportion-majority" = c(20, 50),
-  "neighborhood-distance" = 2,
-  "venues-number" = 5,
-  "venue-catchment-distance" = 10, # Keep this static this time
-  "venue-exclusivity" = 1,
-  "utility-threshold" = 0.5,
-  "beta1-neighbors" = 0.5,
-  "beta2-venue-group" = 0.5,
-  "beta3-venue-loc" = 0,
-  "beta4-home-venues" = 0,
-  "road-scenario" = c("stockholm"),
-  "parks-number" = 3,
-  "park-catchment-distance" = 2,
-  "beta5-park-group" = 0,
-  "beta6-roads-group" = 0.5,
-  "travel-distance" = 5,
-  "road-multiplier" = 1,
-  "real-travel?" = FALSE,
-  "random-seed?" = FALSE
-)
-
-# Run with custom parameters
-experiment12 <- run_segregation_experiment(
-  model_path = model_path, 
-  constants = custom_constants12, 
-  repetitions = 5
-)
-
-# Render the new plot
-print(experiment12$plot)
-```
-<<<<<<< HEAD
 it is hard to get exposure when your can't find any minorities
 
 
@@ -1587,5 +1541,3 @@ experiment13 |> compare_segregation_runs(
 )
 ```
 
-=======
->>>>>>> debb97bc0d7fe3c8aa58ace88519037ed29466d0
