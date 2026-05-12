@@ -160,9 +160,13 @@ setup_file <- create_experiment(
 )
 ```
 
+<<<<<<< HEAD
 # function 
 
 ## model run
+=======
+### function 
+>>>>>>> debb97bc0d7fe3c8aa58ace88519037ed29466d0
 
 ```{r}
 library(tidyverse)
@@ -1239,8 +1243,11 @@ print(experiment11$plot)
 
 ### proportion-majority
 
+<<<<<<< HEAD
 
 
+=======
+>>>>>>> debb97bc0d7fe3c8aa58ace88519037ed29466d0
 ```{r}
 custom_constants12 <- list(
   "density-percent" = 70,
@@ -1276,6 +1283,7 @@ experiment12 <- run_segregation_experiment(
 # Render the new plot
 print(experiment12$plot)
 ```
+<<<<<<< HEAD
 it is hard to get exposure when your can't find any minorities
 
 
@@ -1579,3 +1587,5 @@ experiment13 |> compare_segregation_runs(
 )
 ```
 
+=======
+>>>>>>> debb97bc0d7fe3c8aa58ace88519037ed29466d0
