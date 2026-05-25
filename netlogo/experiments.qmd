@@ -278,7 +278,7 @@ run_segregation_experiment <- function(
       aes(group = index_label, label = index_label), 
       offset = unit(5, "pt"), 
       gap = TRUE, 
-      text_smoothing = 90,
+      text_smoothing = 95,
       color = "gray20"
     ) +
     labs(
@@ -361,16 +361,18 @@ plot_segregation_results <- function(
       y = value, 
       color = factor(.data[[varying_col]]), 
       group = grouping_combo_run, 
-      linetype = index_label
     )) +
-    geom_line(alpha = 0.25) +
-    geomtextpath::geom_textpath(
-      aes(group = index_label, label = index_label), 
-      offset = unit(5, "pt"), 
-      gap = TRUE, 
-      text_smoothing = 90,
-      color = "gray20"
-    ) +
+    geom_line(
+      aes(linetype = index_label),
+      alpha = 0.25,
+      linewidth = 2) +
+    # geomtextpath::geom_textpath(
+    #   aes(group = index_label, label = index_label),
+    #   offset = unit(5, "pt"),
+    #   gap = T,
+    #   text_smoothing = 95,
+    #   color = "gray20"
+    # ) +
     labs(
       title = "Segregation Indices Over Time",
       subtitle = varying_col, 
@@ -385,8 +387,8 @@ plot_segregation_results <- function(
       legend.position = "bottom",
       plot.subtitle = element_text(size = 11, color = "gray20", margin = margin(b = 10)),
       plot.caption = element_text(size = 7, color = "gray50", hjust = 0, margin = margin(t = 15))
-    ) +
-    guides(linetype = "none")
+    )
+    # guides(linetype = "none")
   
   return(p)
 }
@@ -1326,12 +1328,14 @@ experiment13 <- run_segregation_model(
 
 # Render the new plot
 experiment13 |> 
-  plot_segregation_results()
+  plot_segregation_results() +
+  labs(caption = NULL)
+  ggsave(width = 16, height = 9, filename = "expleriment_grid.png")
 
 experiment13 |> plot_segregation_world(
   step_to_plot = 100, 
-  run_to_plot = 1
-)
+  run_to_plot = 7
+) |> ggsave(filename = "expleriment_grid7.png")
 
 experiment13 |> compare_segregation_runs(
   runs_to_compare = c(1, 2, 6, 7),
@@ -1460,11 +1464,24 @@ experiment13 <- run_segregation_experiment(
   model_path = model_path, 
   constants = custom_constants13, 
   repetitions = 10,
-  max_steps = 150
+  max_steps = 100
 )
 
 # Render the new plot
 print(experiment13$plot)
+
+
+
+# Render the new plot
+experiment13 |> 
+  plot_segregation_results() +
+  labs(caption = NULL)
+  ggsave(width = 16, height = 9, filename = "expleriment_grid.png")
+
+experiment13 |> plot_segregation_world(
+  step_to_plot = 100, 
+  run_to_plot = 7
+) |> ggsave(filename = "expleriment_grid7.png")
 ```
 
 ## Add world plots
