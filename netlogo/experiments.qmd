@@ -1459,29 +1459,39 @@ custom_constants13 <- list(
 )
 
 # Run with custom parameters
-experiment13 <- run_segregation_experiment(
-  
+experiment13 <- run_segregation_model(
+  capture_spatial = T,
   model_path = model_path, 
   constants = custom_constants13, 
-  repetitions = 10,
+  repetitions = 5,
   max_steps = 100
 )
 
-# Render the new plot
-print(experiment13$plot)
 
 
-
-# Render the new plot
 experiment13 |> 
   plot_segregation_results() +
-  labs(caption = NULL)
-  ggsave(width = 16, height = 9, filename = "expleriment_grid.png")
+  labs(caption = NULL) 
+  ggsave(width = 16, height = 9, filename = "expleriment_integrated.png")
 
 experiment13 |> plot_segregation_world(
   step_to_plot = 100, 
-  run_to_plot = 7
-) |> ggsave(filename = "expleriment_grid7.png")
+  run_to_plot = 8
+) |> ggsave(filename = "expleriment_integrated8.png")
+
+experiment13 |> compare_segregation_runs(
+  runs_to_compare = c(1, 2, 6, 7),
+  step_to_plot = 100,
+  ncol = 2 # Forces them into a single horizontal row
+)
+
+my_gif <- animate_segregation_world(
+  experiment_output = experiment13,
+  run_to_animate = 8,
+  fps = 10,  # 10 frames per second means a 100-step run takes 10 seconds to watch
+  output_filename = "run_8_integrated.gif"
+)
+
 ```
 
 ## Add world plots
