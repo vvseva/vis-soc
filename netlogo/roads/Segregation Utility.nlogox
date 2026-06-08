@@ -18,18 +18,16 @@ globals [
   
   percent-unhappy
   
-    ;; MASSEY & DENTON (1988) SEGREGATION DIMENSIONS
+  ;; MASSEY & DENTON (1988) SEGREGATION DIMENSIONS
   index-exposure
   index-dissimilarity
   index-clustering
   index-centrality
   index-concentration
   
-  ;; OPTIMIZATION: Cache the patches where turtles can live
+  ;; OPTIMIZATION CACHES
   habitable-patches
   temp-venue
-
-  ;; OPTIMIZATION CACHES
   buildings-enabled?
   environment-changed?
   last-travel-distance
@@ -37,9 +35,6 @@ globals [
   last-neighborhood-distance
 ]
 
-;; LOGIC VARIABLE: Stores "True" if the patch is a road/water, 
-;; independent of the visual pcolor.
-;; traffic records how many turtles traveled by that road patch.
 patches-own [ 
   is-road? 
   traffic 
@@ -49,34 +44,34 @@ patches-own [
   is-green?
   my-park-id
   my-commuters
-  tract-habitable-count  ;; Pre-computed habitable patch count for tracts
+  tract-habitable-count  
+  is-habitable?      ;; OPTIMIZATION: O(1) checking if patch allows movement
 ]
 
 families-own [
   happy?
-  my-utility          ;; The calculated utility score (incorporating logit error)
+  my-utility          
   
-  similar-nearby      ;; Raycast visible similar neighbors
-  total-nearby        ;; Total visible neighbors
+  similar-nearby      
+  total-nearby        
 
-  ;; Standard variables
   my-catchment-distance
   my-adventurousness
   my-commitment
   visited-venues
-  visited-parks       ;; New tracking for park attendees
+  visited-parks       
   visited-roads
 ]
 
 venues-own [
   my-venue-exclusivity
   my-venue-obligatoriness
-  my-attendees        ;; An agentset of families currently visiting this venue
+  my-attendees        
 ]
 
 parks-own [
-  my-patches          ;; The set of patches representing the park's physical area
-  my-attendees        ;; An agentset of families currently visiting this park
+  my-patches          
+  my-attendees        
 ]
 
 to setup
@@ -94,10 +89,7 @@ to setup
   clear-all
   set temp-venue nobody
   set colors [red green yellow blue orange]
-  ifelse random-seed? [
-    random-seed 42] [
-    random-seed new-seed
-  ]
+  ifelse random-seed? [ random-seed 42 ] [ random-seed new-seed ]
 
   set buildings-enabled? (road-scenario = "real-norrkoping" and file-exists? "buildings.shp")
   set environment-changed? false
@@ -106,18 +98,18 @@ to setup
   set last-neighborhood-distance neighborhood-distance
 
   ;; 3. Draw the Map
-  ;; We wrap this in no-display to speed up the drawing process
   no-display
   draw-selected-scenario
 
-  
   ;; 4. Cache Habitable Patches
+  ask patches [ set is-habitable? false ]
   ifelse buildings-enabled? [
     set habitable-patches patches with [is-building? and not is-river?]
   ]
   [
     set habitable-patches patches with [not is-road? and not is-river?]
   ]
+  ask habitable-patches [ set is-habitable? true ]
 
   initialize-tract-habitable-counts
 
@@ -125,17 +117,17 @@ to setup
   setup-venues
   setup-families
   
-    apply-intervention-scenario
+  apply-intervention-scenario
 
   evaluate-venues-and-parks 
   update-families
   update-globals
   reset-ticks
-  display ;; Force a display update after everything is ready
+  display 
 end
 
 to go
-  ;; Check if sliders have changed, indicating environment needs full re-evaluation
+  ;; Check if sliders have changed
   if (travel-distance != last-travel-distance) or 
      (road-multiplier != last-road-multiplier) or 
      (neighborhood-distance != last-neighborhood-distance) [
@@ -157,6 +149,43 @@ to go
   tick
 end
 
+;; --- ROAD TRAVERSAL ALGORITHM ---
+
+;; Calculates the exact reachable polygon using a flood-fill budget methodology
+to-report get-reachable-network [ center-patch max-base-dist road-mult ]
+  ;; 1. Base travel radius (Flood fill step-by-step respecting rivers)
+  let active-patches (patch-set center-patch)
+  let reached-patches active-patches
+  let current-step 0
+  
+  while [current-step < max-base-dist] [
+    let next-patches (patch-set [neighbors with [not is-river?]] of active-patches) with [not member? self reached-patches]
+    set reached-patches (patch-set reached-patches next-patches)
+    set active-patches next-patches
+    set current-step current-step + 1
+  ]
+  
+  ;; 2. Identify initial roads within base walking distance
+  let active-roads reached-patches with [is-road?]
+  let found-roads active-roads
+  
+  ;; 3. Propagate strictly along roads using the multiplier budget
+  ;; For each propagation step, budget decreases by 1
+  let budget (max-base-dist * road-mult)
+  while [budget > 0 and any? active-roads] [
+    let next-roads (patch-set [neighbors with [is-road? and not is-river?]] of active-roads) with [not member? self found-roads]
+    set found-roads (patch-set found-roads next-roads)
+    set active-roads next-roads
+    set budget budget - 1
+  ]
+  
+  ;; 4. Include off-road access (patches immediately adjacent to reached roads so agents can step off to a venue)
+  let off-road-access (patch-set [neighbors with [not is-river?]] of found-roads)
+  
+  report (patch-set reached-patches found-roads off-road-access)
+end
+
+
 ;; --- GENERATION & SETUP ---
 
 to setup-parks
@@ -165,7 +194,6 @@ to setup-parks
     set color green
     set size 2
     move-to one-of habitable-patches
-    ;; Grow park to occupy multiple patches
     set my-patches (patches in-radius 1.5) with [not is-road? and not is-river?]
     ask my-patches [
       set pcolor green + 2
@@ -196,8 +224,8 @@ to setup-families
     ask n-of target-population habitable-patches [
       sprout-families 1 [
         ifelse random-float 100 < proportion-majority
-        [ set color item 0 colors ] ; Assign the first color
-        [ set color item (1 + random (number-of-ethnicities - 1)) colors ] ; Assign any other color
+        [ set color item 0 colors ] 
+        [ set color item (1 + random (number-of-ethnicities - 1)) colors ] 
         set shape "person"
         set size 1.5
         set happy? true
@@ -215,7 +243,6 @@ to setup-families
 end
 
 to draw-selected-scenario
-  ;; Reset world state
   ask patches [ 
     set pcolor black 
     set is-road? false 
@@ -229,9 +256,7 @@ to draw-selected-scenario
   ]
 
   (ifelse
-    road-scenario = "empty" [
-      ask patches [ set pcolor black ]
-    ]
+    road-scenario = "empty" [ ask patches [ set pcolor black ] ]
 
     road-scenario = "grid" [
       ask patches [
@@ -244,12 +269,10 @@ to draw-selected-scenario
 
     road-scenario = "isolated-communities" [
       ask patches [
-        ;; Wide rivers creating 4 distinct quadrants
         if abs pxcor < 2 or abs pycor < 2 [
           set pcolor blue
           set is-river? true
         ]
-        ;; Internal road grids that do NOT cross the rivers
         if (pxcor mod 7 = 0) or (pycor mod 7 = 0) [
           if not is-river? [
             set pcolor brown
@@ -261,16 +284,14 @@ to draw-selected-scenario
 
     road-scenario = "connected-communities" [
       ask patches [
-        ;; Same river layout
         if abs pxcor < 2 or abs pycor < 2 [
           set pcolor blue
           set is-river? true
         ]
-        ;; High density roads that overwrite rivers to act as bridges
         if (pxcor mod 5 = 0) or (pycor mod 5 = 0) [
           set pcolor brown
           set is-road? true
-          set is-river? false ;; Overwrites river to create a bridge
+          set is-river? false 
         ]
       ]
     ]
@@ -278,19 +299,16 @@ to draw-selected-scenario
     road-scenario = "city-center-suburbia" [
       ask patches [
         let dist distancexy 0 0
-        ;; Core City Center: Dense road grid
         if dist <= 10 [
           if (pxcor mod 3 = 0) or (pycor mod 3 = 0) [
             set pcolor brown
             set is-road? true
           ]
         ]
-        ;; Ring Road separating center from suburbia
         if dist > 10 and dist < 12 [
           set pcolor brown
           set is-road? true
         ]
-        ;; Suburbia: Sparse roads, mostly empty patches for housing
         if dist >= 12 [
           if (pxcor mod 12 = 0) or (pycor mod 12 = 0) [
             set pcolor brown
@@ -314,6 +332,7 @@ to draw-selected-scenario
         if abs (pxcor + 5) < 1 [ 
           set pcolor brown 
           set is-road? true
+          set is-river? false
         ]
       ]
     ]
@@ -329,21 +348,19 @@ to draw-selected-scenario
         if (pxcor mod 10 = 0) or (pycor mod 10 = 0) [ 
           set pcolor brown 
           set is-road? true
+          set is-river? false
         ]
       ]
     ]
 
     road-scenario = "real-norrkoping" [
       ask patches [set pcolor gray + 4]
-      ;; A. Draw Waterways (Blue)
       ifelse ( file-exists? "waterways.shp" ) [
         set water-dataset gis:load-dataset "waterways.shp"
         gis:set-world-envelope (gis:envelope-of water-dataset)
-        
         gis:set-drawing-color blue
         gis:draw water-dataset 1
         display
-        
         foreach gis:feature-list-of water-dataset [ feature ->
           ask patches gis:intersecting feature [ 
             set is-river? true
@@ -353,26 +370,21 @@ to draw-selected-scenario
         ]
       ] [ ]
 
-      ;; B. Draw Roads (Brown)
       ifelse ( file-exists? "roads.shp" ) [
         set road-dataset gis:load-dataset "roads.shp"
         gis:set-world-envelope (gis:envelope-of road-dataset)
-        
         gis:set-drawing-color brown
         gis:draw road-dataset 1
         display
         load-gis-logic road-dataset
       ] [ ]
 
-      ;; C. Draw Buildings (Orange)
       ifelse ( file-exists? "buildings.shp" ) [
         set building-dataset gis:load-dataset "buildings.shp"
         gis:set-world-envelope (gis:envelope-of building-dataset)
-        
         gis:set-drawing-color orange
         gis:fill building-dataset 1.0
         display
-        
         foreach gis:feature-list-of building-dataset [ feature ->
           ask patches gis:intersecting feature [ 
             set is-building? true
@@ -387,45 +399,37 @@ end
 to load-gis-logic [ dataset ]
   foreach gis:feature-list-of dataset [ feature ->
     ask patches gis:intersecting feature [ 
-      if not is-river? [ set is-road? true ]
+      ;; Force road to overwrite river
+      set is-road? true 
+      set is-river? false
+      set pcolor brown
     ]
   ]
 end
 
 to initialize-tract-habitable-counts
   let tracts-to-update patches with [ (pxcor mod 10 = 0) and (pycor mod 10 = 0) ]
-  let buildings? buildings-enabled?
   ask tracts-to-update [
-    ifelse buildings? [
-      set tract-habitable-count count (patches in-radius 5) with [is-building? and not is-river?]
-    ] [
-      set tract-habitable-count count (patches in-radius 5) with [not is-road? and not is-river?]
-    ]
+    set tract-habitable-count count (patches in-radius 5) with [is-habitable?]
   ]
 end
 
-
 to apply-intervention-scenario
   (ifelse
-    intervention-scenario = "none" [
-      ;; Do nothing. Keeps the default randomly distributed setup from setup-parks and setup-venues.
-    ]
+    intervention-scenario = "none" [ ]
 
     intervention-scenario = "central-park" [
-      ;; Wipes out existing scattered parks and places one massive park in the city center
       ask parks [ die ]
       ask patches with [is-green?] [
         if not is-road? and not is-river? [ set pcolor black ]
         set is-green? false
         set my-park-id nobody
       ]
-      
       create-parks 1 [
         set shape "tree"
         set color green
         set size 4
         move-to patch 0 0
-        ;; The park radius scales with the world size
         set my-patches (patches in-radius (max-pxcor / 3)) with [not is-road? and not is-river?]
         ask my-patches [
           set pcolor green + 2
@@ -437,36 +441,27 @@ to apply-intervention-scenario
     ]
 
     intervention-scenario = "venue-hubs" [
-      ;; Restructures randomized venues into 4 dense, competitive 'destination hubs'
       let q-x floor (max-pxcor / 2)
       let q-y floor (max-pycor / 2)
       let hub-centers (list patch (- q-x) (- q-y) patch q-x (- q-y) patch (- q-x) q-y patch q-x q-y)
-      
       let i 0
       ask venues [
         let target-hub item (i mod 4) hub-centers
-        let possible-spots (patches in-radius 5) with [member? self habitable-patches]
-        ifelse any? possible-spots [
-          move-to one-of possible-spots
-        ] [
-          move-to target-hub
-        ]
+        let possible-spots (patches in-radius 5) with [is-habitable?]
+        ifelse any? possible-spots [ move-to one-of possible-spots ] [ move-to target-hub ]
         set i i + 1
       ]
     ]
 
     intervention-scenario = "bridge-parks" [
-      ;; Cleans scattered parks and intentionally builds parks over rivers to bridge divided communities
       ask parks [ die ]
       ask patches with [is-green?] [
         if not is-road? and not is-river? [ set pcolor black ]
         set is-green? false
         set my-park-id nobody
       ]
-
       let river-patches patches with [is-river?]
       if any? river-patches [
-        ;; Finds intersections to build park bridges across water
         ask river-patches with [(pxcor mod 8 = 0) and (pycor mod 8 = 0)] [
           sprout-parks 1 [
             set shape "tree"
@@ -476,7 +471,7 @@ to apply-intervention-scenario
             ask my-patches [
               set pcolor green + 2
               set is-green? true
-              set is-river? false ;; The park destroys the river block, acting as a bridge!
+              set is-river? false 
               set my-park-id [who] of myself
             ]
             set my-attendees (turtle-set nobody)
@@ -486,7 +481,6 @@ to apply-intervention-scenario
     ]
 
     intervention-scenario = "mixed-grid" [
-      ;; Deletes random generation and forces a strict alternating grid of parks and venues
       ask parks [ die ]
       ask patches with [is-green?] [
          if not is-road? and not is-river? [ set pcolor black ]
@@ -494,11 +488,9 @@ to apply-intervention-scenario
          set my-park-id nobody
       ]
       ask venues [ die ]
-
       let spacing 8
       
-      ;; Grid Parks
-      ask patches with [pxcor mod spacing = 0 and pycor mod spacing = 0 and member? self habitable-patches] [
+      ask patches with [pxcor mod spacing = 0 and pycor mod spacing = 0 and is-habitable?] [
         sprout-parks 1 [
           set shape "tree"
           set color green
@@ -513,8 +505,7 @@ to apply-intervention-scenario
         ]
       ]
       
-      ;; Grid Venues offset by half spacing
-      ask patches with [(pxcor + (spacing / 2)) mod spacing = 0 and (pycor + (spacing / 2)) mod spacing = 0 and member? self habitable-patches] [
+      ask patches with [(pxcor + (spacing / 2)) mod spacing = 0 and (pycor + (spacing / 2)) mod spacing = 0 and is-habitable?] [
         sprout-venues 1 [
           set shape "house"
           set color (item (random number-of-ethnicities) colors)
@@ -527,11 +518,9 @@ to apply-intervention-scenario
     ]
     
     intervention-scenario = "majority-spread-minority-hubs" [
-      ;; The majority (red, item 0) is spread out, while minorities are placed in 2 dense hubs
       let majority-color item 0 colors
       let q-x floor (max-pxcor / 2)
       let minority-hubs (list patch (- q-x) 0 patch q-x 0)
-      
       let i 0
       ask venues [
         ifelse color = majority-color [
@@ -539,69 +528,50 @@ to apply-intervention-scenario
           if any? possible-spots [ move-to one-of possible-spots ]
         ] [
           let target-hub item (i mod 2) minority-hubs
-          let possible-spots ([patches in-radius 5] of target-hub) with [member? self habitable-patches]
-          ifelse any? possible-spots [
-            move-to one-of possible-spots
-          ] [
-            move-to target-hub
-          ]
+          let possible-spots ([patches in-radius 5] of target-hub) with [is-habitable?]
+          ifelse any? possible-spots [ move-to one-of possible-spots ] [ move-to target-hub ]
           set i i + 1
         ]
       ]
     ]
 
     intervention-scenario = "integrated-venues" [
-      ;; Group venues into diverse clusters to maximize inter-group exposure
       let num-colors length colors
       let num-clusters ceiling (count venues / num-colors)
-      
       let actual-clusters num-clusters
       if actual-clusters > count habitable-patches [ set actual-clusters count habitable-patches ]
       
       if actual-clusters > 0 [
         let cluster-centers [self] of n-of actual-clusters habitable-patches
-        
         foreach colors [ c ->
           let venues-of-color venues with [color = c]
           let i 0
           ask venues-of-color [
             let target-center item (i mod actual-clusters) cluster-centers
-            let possible-spots ([patches in-radius 3] of target-center) with [member? self habitable-patches]
-            ifelse any? possible-spots [
-              move-to one-of possible-spots
-            ] [
-              move-to target-center
-            ]
+            let possible-spots ([patches in-radius 3] of target-center) with [is-habitable?]
+            ifelse any? possible-spots [ move-to one-of possible-spots ] [ move-to target-center ]
             set i i + 1
           ]
         ]
       ]
     ]
-    
   )
 end
 
 ;; --- LOGIC UPDATES ---
 
 to evaluate-venues-and-parks
-  ;; Reset all attendee lists
   ask venues [ set my-attendees (turtle-set nobody) ]
   ask parks [ set my-attendees (turtle-set nobody) ]
   ask patches with [is-road?] [ set my-commuters (turtle-set nobody) ]
 
-  ;; 1. Families choose venues and parks
   ask families [
-    ;; ROADS (Local neighborhood check)
-    set visited-roads patches in-radius neighborhood-distance with [is-road?]
+    let reachable-area get-reachable-network patch-here travel-distance road-multiplier
     
-    ;; DYNAMIC CATCHMENT (Expand if roads are present)
-    let dynamic-catchment travel-distance
-    if any? visited-roads [
-      set dynamic-catchment (travel-distance * road-multiplier)
-    ]
+    set visited-roads reachable-area with [is-road?]
 
     ;; VENUES
-    let possible-venues venues in-radius dynamic-catchment
+    let possible-venues venues-on reachable-area
     let open-venues-group possible-venues with [color = [color] of myself]
     let open-venues-adventure possible-venues with [color != [color] of myself and my-venue-exclusivity < [my-adventurousness] of myself]
 
@@ -609,24 +579,18 @@ to evaluate-venues-and-parks
     set visited-venues open-venues with [1 - my-venue-obligatoriness < [my-commitment] of myself]
     
     ;; PARKS
-    set visited-parks parks in-radius dynamic-catchment
+    set visited-parks parks-on reachable-area
     
     ;; Add to attendees
     let family-agent self
     if any? visited-venues [
-      ask visited-venues [
-        set my-attendees (turtle-set my-attendees family-agent)
-      ]
+      ask visited-venues [ set my-attendees (turtle-set my-attendees family-agent) ]
     ]
     if any? visited-parks [
-      ask visited-parks [
-        set my-attendees (turtle-set my-attendees family-agent)
-      ]
+      ask visited-parks [ set my-attendees (turtle-set my-attendees family-agent) ]
     ]
     if any? visited-roads [
-      ask visited-roads [
-        set my-commuters (turtle-set my-commuters family-agent)
-      ]
+      ask visited-roads [ set my-commuters (turtle-set my-commuters family-agent) ]
     ]
   ]
   
@@ -639,9 +603,7 @@ to rebuild-all-rays
     let my-candidates other families in-radius neighborhood-distance with [who > [who] of myself]
     ask my-candidates [
       if has-line-of-sight? myself [
-        create-ray-with myself [
-          hide-link
-        ]
+        create-ray-with myself [ hide-link ]
       ]
     ]
   ]
@@ -649,36 +611,27 @@ end
 
 to update-families
   ask families [
-    ;; --- X1: Agents in my Neighborhood (Raycast Vision) ---
-    ;; We still identify visible neighbors because total-nearby and similar-nearby 
-    ;; are required globally for the UI plots and Exposure Index.
-    ;; OPTIMIZATION: Use ray-neighbors cache to retrieve visible neighbors in O(1) time
     let visible-candidates ray-neighbors
     
     set total-nearby count visible-candidates
     set similar-nearby count visible-candidates with [color = [color] of myself]
     
     let val1 0
-    if beta1-neighbors != 0 [
-      set val1 calculate-similarity visible-candidates
-    ]
+    if beta1-neighbors != 0 [ set val1 calculate-similarity visible-candidates ]
 
-    ;; --- X2: Agents in my Venues ---
     let val2 0
     if beta2-venue-group != 0 [
       let group2 (turtle-set [my-attendees] of visited-venues)
-      set group2 other group2 ;; Remove myself from the count
+      set group2 other group2 
       set val2 calculate-similarity group2
     ]
 
-    ;; --- X3: Agents around my Venues ---
     let val3 0
     if beta3-venue-loc != 0 [
       let group3 (turtle-set [other families in-radius neighborhood-distance] of visited-venues)
       set val3 calculate-similarity group3
     ]
 
-    ;; --- X4: Agents coming to my Neighborhood ---
     let val4 0
     if beta4-home-venues != 0 [
       let local-venues venues in-radius neighborhood-distance
@@ -687,7 +640,6 @@ to update-families
       set val4 calculate-similarity group4
     ]
 
-    ;; --- X5: Agents in my Parks (New Variable per constraints) ---
     let val5 0
     if beta5-park-group != 0 [
       let group5 (turtle-set [my-attendees] of visited-parks)
@@ -695,7 +647,6 @@ to update-families
       set val5 calculate-similarity group5
     ]
 
-    ;; --- X6: Agents on my Visited Roads (New Variable) ---
     let val6 0
     if beta6-roads-group != 0 [
       let group6 (turtle-set [my-commuters] of visited-roads)
@@ -703,33 +654,16 @@ to update-families
       set val6 calculate-similarity group6
     ]
 
-    ;; --- CALCULATE DISCRETE CHOICE UTILITY DISTRIBUTION ---
-    ;; Formula: V = Sum(Beta_i * X_i) + Epsilon
     let weights-sum (beta1-neighbors + beta2-venue-group + beta3-venue-loc + beta4-home-venues + beta5-park-group + beta6-roads-group)
-    
-    ;; Introduce error term to create the discrete probability distribution based on logit structure
     let eps random-normal 0 0.1 
-    
-    let weighted-score (val1 * beta1-neighbors) + 
-                       (val2 * beta2-venue-group) + 
-                       (val3 * beta3-venue-loc) + 
-                       (val4 * beta4-home-venues) + 
-                       (val5 * beta5-park-group) +
-                       (val6 * beta6-roads-group)
+    let weighted-score (val1 * beta1-neighbors) + (val2 * beta2-venue-group) + (val3 * beta3-venue-loc) + (val4 * beta4-home-venues) + (val5 * beta5-park-group) + (val6 * beta6-roads-group)
 
-    ifelse weights-sum > 0 [
-      set my-utility (weighted-score / weights-sum) + eps
-    ]
-    [
-      set my-utility eps
-    ]
+    ifelse weights-sum > 0 [ set my-utility (weighted-score / weights-sum) + eps ] [ set my-utility eps ]
   ]
 end
 
-;; Calculates the percentage of agents in a group that share my color
 to-report calculate-similarity [ target-group ]
   if not any? target-group [ report 0.5 ]
-
   let total-count count target-group
   let similar-count count target-group with [color = [color] of myself]
   report (similar-count / total-count)
@@ -738,18 +672,11 @@ end
 ;; --- MOVEMENT & HAPPINESS DISTRIBUTION ---
 
 to move-unhappy-families
-  ;; Calculate exactly 10% of the population
   let num-to-move ceiling (count families * 0.10)
-  
   if num-to-move > 0 [
-    ;; Sort ascending by utility (taking the bottom 10%)
     let sorted-families sort-by [ [f1 f2] -> [my-utility] of f1 < [my-utility] of f2 ] families
     let least-happy sublist sorted-families 0 num-to-move
-    
-    ;; Set states for visualization
     ask families [ set happy? true ]
-    
-    ;; Force movement of the bottom 10%
     ask turtle-set least-happy [ 
       set happy? false
       find-new-spot 
@@ -758,105 +685,58 @@ to move-unhappy-families
 end
 
 to find-new-spot
-  let max-search-radius travel-distance
+  ;; Evaluate exactly which patches are reachable by walking + driving network
+  let reachable-area get-reachable-network patch-here travel-distance road-multiplier
+  let candidates reachable-area with [is-habitable? and not any? turtles-on self]
   
-  if any? patches in-radius travel-distance with [is-road?] [
-    set max-search-radius (travel-distance * road-multiplier)
-  ]
-  
-  let candidates habitable-patches in-radius max-search-radius with [not any? turtles-on self]
   if not any? candidates [ stop ]
-  
-  let target nobody
-  
-  ifelse real-travel? [
-    let reachable-candidates candidates with [ is-reachable? myself self ]
-    if any? reachable-candidates [
-      set target one-of reachable-candidates
-    ]
-  ]
-  [
-    let tries 0
-    while [target = nobody and tries < 20] [
-      let potential-spot one-of candidates
-      if is-reachable? self potential-spot [
-        set target potential-spot
-      ]
-      set tries tries + 1
-    ]
-  ]
+  let target one-of candidates
   
   if target != nobody [
+    ;; Draw simple line for traffic heatmapping (avoids heavy A* pathing calculations)
     let final-path get-path-patches target
-    ask final-path with [is-road?] [
-      set traffic traffic + 1
-    ]
+    ask final-path with [is-road?] [ set traffic traffic + 1 ]
     
-    ;; 1. Remove from old attendee/commuter lists
     let family-agent self
     if visited-venues != nobody and any? visited-venues [
-      ask visited-venues [
-        set my-attendees my-attendees with [self != family-agent]
-      ]
+      ask visited-venues [ set my-attendees my-attendees with [self != family-agent] ]
     ]
     if visited-parks != nobody and any? visited-parks [
-      ask visited-parks [
-        set my-attendees my-attendees with [self != family-agent]
-      ]
+      ask visited-parks [ set my-attendees my-attendees with [self != family-agent] ]
     ]
     if visited-roads != nobody and any? visited-roads [
-      ask visited-roads [
-        set my-commuters my-commuters with [self != family-agent]
-      ]
+      ask visited-roads [ set my-commuters my-commuters with [self != family-agent] ]
     ]
     
-    ;; 2. Destroy old ray links
     ask my-rays [ die ]
-
-    ;; 3. Move to target
     move-to target
 
-    ;; 4. Re-calculate visited sets at new position
-    set visited-roads patches in-radius neighborhood-distance with [is-road?]
-    
-    let dynamic-catchment travel-distance
-    if any? visited-roads [
-      set dynamic-catchment (travel-distance * road-multiplier)
-    ]
+    ;; Evaluate dynamically at the new location
+    let new-reachable-area get-reachable-network patch-here travel-distance road-multiplier
+    set visited-roads new-reachable-area with [is-road?]
 
-    let possible-venues venues in-radius dynamic-catchment
+    let possible-venues venues-on new-reachable-area
     let open-venues-group possible-venues with [color = [color] of myself]
     let open-venues-adventure possible-venues with [color != [color] of myself and my-venue-exclusivity < [my-adventurousness] of myself]
-
     let open-venues (turtle-set open-venues-group open-venues-adventure)
-    set visited-venues open-venues with [1 - my-venue-obligatoriness < [my-commitment] of myself]
     
-    set visited-parks parks in-radius dynamic-catchment
+    set visited-venues open-venues with [1 - my-venue-obligatoriness < [my-commitment] of myself]
+    set visited-parks parks-on new-reachable-area
 
-    ;; 5. Add to new attendee/commuter lists
     if any? visited-venues [
-      ask visited-venues [
-        set my-attendees (turtle-set my-attendees family-agent)
-      ]
+      ask visited-venues [ set my-attendees (turtle-set my-attendees family-agent) ]
     ]
     if any? visited-parks [
-      ask visited-parks [
-        set my-attendees (turtle-set my-attendees family-agent)
-      ]
+      ask visited-parks [ set my-attendees (turtle-set my-attendees family-agent) ]
     ]
     if any? visited-roads [
-      ask visited-roads [
-        set my-commuters (turtle-set my-commuters family-agent)
-      ]
+      ask visited-roads [ set my-commuters (turtle-set my-commuters family-agent) ]
     ]
 
-    ;; 6. Rebuild rays at new position (symmetric creation)
     let my-candidates other families in-radius neighborhood-distance
     ask my-candidates [
       if has-line-of-sight? myself [
-        create-ray-with myself [
-          hide-link
-        ]
+        create-ray-with myself [ hide-link ]
       ]
     ]
   ]
@@ -865,33 +745,25 @@ end
 to-report has-line-of-sight? [ target ]
   let dist distance target
   if dist = 0 [ report true ]
-
   let ang towards target
   let step 1.0
   let current-dist step
-
   while [current-dist < dist] [
     let p patch-at-heading-and-distance ang current-dist
     if p = nobody [ report false ]
-    
-    ;; Rivers block vision
     if [is-river?] of p [ report false ]
-    
-    
     set current-dist current-dist + step
   ]
   report true
 end
 
-;; Helper reporter: Extracts the actual patches intersected on a straight line
 to-report get-path-patches [ target ]
   let dist distance target
   if dist = 0 [ report patch-set patch-here ]
   let ang towards target
-  let step 0.5 ;; Finer resolution to guarantee no missed road patches
+  let step 0.5 
   let current-dist step
   let p-set (patch-set patch-here)
-  
   while [current-dist <= dist] [
     let p patch-at-heading-and-distance ang current-dist
     if p != nobody [ set p-set (patch-set p-set p) ]
@@ -900,34 +772,9 @@ to-report get-path-patches [ target ]
   report p-set
 end
 
-to-report is-reachable? [ turtle-agent patch-agent ]
-  let actual-dist [distance patch-agent] of turtle-agent
-  let p-set [get-path-patches patch-agent] of turtle-agent
-  let total-p count p-set
-  
-  if total-p = 0 [ report false ]
-  
-  ;; Rivers block mobility completely
-  if any? p-set with [is-river?] [ report false ]
-  
-  ;; Automatically reachable if within base travel budget
-  if actual-dist <= travel-distance [ report true ]
-  
-  ;; For patches further away, check if roads make them reachable
-  let road-p count p-set with [is-road?]
-  let f (road-p / total-p)
-  
-  ;; Roads cost 1/road-multiplier, normal patches cost 1
-  let effective-cost actual-dist * ( (1 - f) + (f / road-multiplier) )
-  
-  report effective-cost <= travel-distance
-end
-
 
 ;; --- STATISTICAL METRICS: MASSEY & DENTON (1988) ---
 to calculate-segregation-dimensions
-  ;; For consistent binary indices, we compare "Group X" (item 0 in the colors list, e.g., red) 
-  ;; against "Group Y" (all other groups combined).
   let gx-color item 0 colors
   let pop-x count families with [color = gx-color]
   let pop-y count families with [color != gx-color]
@@ -935,27 +782,20 @@ to calculate-segregation-dimensions
   
   if pop-x = 0 or pop-y = 0 or pop-t = 0 [ stop ]
 
-  ;; 1. EXPOSURE (Isolation Index for Group X)
-  ;; Measures the experience of the average person: the probability of sharing a unit with their own group.
-  ;; We rely on the established line-of-sight raycast `similar-nearby` as the spatial neighborhood unit.
   let iso-sum sum [ similar-nearby / total-nearby ] of families with [color = gx-color and total-nearby > 0]
   set index-exposure (iso-sum / pop-x)
 
-  ;; Define demographic "Tracts" using a grid approximation.
-  ;; We place anchor points every 10 patches and analyze a radius of 5 (roughly a 10x10 block).
   let tracts patches with [ (pxcor mod 10 = 0) and (pycor mod 10 = 0) ]
   let total-area count habitable-patches
   
-  ;; 2. UNEVENNESS (Dissimilarity Index, D)
   let d-sum 0
-  ;; 3. CONCENTRATION (Delta Index, Δ)
   let delta-sum 0
   
   ask tracts [
     let local-fam families in-radius 5
     let x_i count local-fam with [color = gx-color]
     let y_i count local-fam with [color != gx-color]
-    let a_i tract-habitable-count  ;; OPTIMIZATION: Read pre-calculated count directly
+    let a_i tract-habitable-count  
     
     set d-sum d-sum + abs ( (x_i / pop-x) - (y_i / pop-y) )
     if total-area > 0 [
@@ -965,33 +805,7 @@ to calculate-segregation-dimensions
   set index-dissimilarity (d-sum / 2)
   set index-concentration (delta-sum / 2)
   
-  ;; 4. CENTRALITY (Relative Centralization Index, RCI)
-  ;; Sorts the established tracts by distance to the city center point (0,0)
-  ;; and computes the cumulative spatial distribution curve between the two groups.
-;   let sorted-tracts sort-by [ [t1 t2] -> [distancexy 0 0] of t1 < [distancexy 0 0] of t2 ] tracts
-;   let cum-X 0
-;   let cum-Y 0
-;   let rci-sum 0
-  
-;   foreach sorted-tracts [ t ->
-;     let local-fam [families in-radius 5] of t
-;     let p-x (count local-fam with [color = gx-color]) / pop-x
-;     let p-y (count local-fam with [color != gx-color]) / pop-y
-    
-;     let prev-cum-X cum-X
-;     let prev-cum-Y cum-Y
-    
-;     set cum-X cum-X + p-x
-;     set cum-Y cum-Y + p-y
-    
-;     set rci-sum rci-sum + (prev-cum-X * cum-Y) - (cum-X * prev-cum-Y)
-;   ]
-;   set index-centrality rci-sum
-  
-  ;; 5. CLUSTERING (Spatial Proximity Index, SP)
-  ;; Exhaustive O(N^2) evaluation for exponential distance decay is computationally crushing. 
-  ;; We execute a Monte Carlo approximation by sampling 150 random agents from each group per tick.
-  let n_random 150  ;; OPTIMIZATION: Reduced sample size from 400 to 150 for 85% fewer calculations
+  let n_random 150  
   let sample-x n-of (ifelse-value (pop-x > n_random) [n_random] [pop-x]) families with [color = gx-color]
   let sample-y n-of (ifelse-value (pop-y > n_random) [n_random] [pop-y]) families with [color != gx-color]
   let sample-t n-of (ifelse-value (pop-t > n_random) [n_random] [pop-t]) families
@@ -1016,8 +830,6 @@ to update-globals
     [ set percent-similar (sum-similar / sum-total) * 100 ]
 
   set average-utility mean [my-utility] of families
-  
-  
   set percent-unhappy (count families + 1) / (count families with [not happy?] + 1)
   
   calculate-segregation-dimensions
@@ -1026,7 +838,7 @@ end
 ;; --- MANUAL PLACEMENT ---
 
 to place-temporary-venue
-    if mouse-down? [
+  if mouse-down? [
     ask patches with [pcolor = lime] [ set pcolor black ]
     let target-patch patch mouse-xcor mouse-ycor
     ifelse temp-venue = nobody [
@@ -1036,18 +848,13 @@ to place-temporary-venue
         move-to target-patch
       ]
     ]
-    [
-      ask temp-venue [
-        move-to target-patch
-      ]
-    ]
+    [ ask temp-venue [ move-to target-patch ] ]
+    
     ask temp-venue [
       set color (item (random number-of-ethnicities) colors) 
       set my-venue-exclusivity venue-exclusivity
       set my-venue-obligatoriness 1
-      ask patches in-radius venue-catchment-distance [
-        set pcolor lime
-      ]
+      ask patches in-radius venue-catchment-distance [ set pcolor lime ]
     ]
     while [mouse-down?] [ every 0.1 [] ]
     display
@@ -1064,9 +871,7 @@ to confirm-venue-placement
     update-globals
     user-message "Venue Confirmed."
   ]
-  [
-    user-message "No temporary venue found to confirm."
-  ]
+  [ user-message "No temporary venue found to confirm." ]
 end
 
 to draw-roads
@@ -1084,27 +889,23 @@ to draw-roads
   ]
 end
 
-to remove-roads
+to erase-patch
   if mouse-down? [
     ask patch mouse-xcor mouse-ycor [
-      ;; Remove roads
-      if pcolor = brown or is-road? [ 
-         set pcolor black 
-         set is-road? false 
-         set traffic 0
-      ]
+      ;; Reset color to background
+      set pcolor black
       
-      ;; Remove parks
-      if pcolor = (green + 2) or is-green? [
-         set pcolor black
-         set is-green? false
-         set my-park-id nobody
-         ask parks [
-           set my-patches my-patches with [self != myself]
-         ]
-      ]
+      ;; Turn off all properties
+      set is-road? false 
+      set is-river? false
+      set is-green? false
+      set traffic 0
+      set my-park-id nobody
       
-      ;; Remove venues and park core nodes
+      ;; Clean up network arrays
+      ask parks [ set my-patches my-patches with [self != myself] ]
+      
+      ;; Destroy structures
       ask venues-here [ die ]
       ask parks-here [ die ]
     ]
@@ -1125,13 +926,10 @@ to grow-parks
         let nearest-park min-one-of (parks in-radius 10) [distance myself]
         if nearest-park != nobody [
           set my-park-id [who] of nearest-park
-          ask nearest-park [
-            set my-patches (patch-set my-patches myself)
-          ]
+          ask nearest-park [ set my-patches (patch-set my-patches myself) ]
         ]
       ]
       [
-        ;; If no parks exist within 5 patches distance, spawn a core park node here
         sprout-parks 1 [
           set shape "tree"
           set color green
@@ -1170,7 +968,7 @@ end]]></code>
     <button x="124" y="14" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="80" display="go">go</button>
     <slider x="35" step="1" y="605" max="5" width="192" display="number-of-ethnicities" height="50" min="2" direction="Horizontal" default="2.0" variable="number-of-ethnicities"></slider>
     <slider x="15" step="1" y="176" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
-    <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="6.0" variable="neighborhood-distance"></slider>
+    <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="2.0" variable="neighborhood-distance"></slider>
     <slider x="815" step="1" y="15" max="20" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="0.0" variable="venues-number"></slider>
     <slider x="815" step="1" y="103" max="20" width="173" display="venue-catchment-distance" height="50" min="0" direction="Horizontal" default="10.0" variable="venue-catchment-distance"></slider>
     <slider x="815" step="0.1" y="178" max="1" width="222" display="venue-exclusivity" height="50" min="0.0" direction="Horizontal" default="1.0" variable="venue-exclusivity"></slider>
@@ -1199,7 +997,7 @@ plotxy utility-threshold plot-y-max</update>
     </plot>
     <monitor x="420" precision="1" y="535" height="60" fontSize="11" width="113" display="Percent Unhappy">percent-unhappy</monitor>
     <monitor x="294" precision="1" y="535" height="60" fontSize="11" width="108" display="Percent Similar">percent-similar</monitor>
-    <chooser x="480" y="670" height="60" variable="road-scenario" current="4" width="250" display="road-scenario">
+    <chooser x="480" y="670" height="60" variable="road-scenario" current="1" width="250" display="road-scenario">
       <choice type="string" value="real-norrkoping"></choice>
       <choice type="string" value="empty"></choice>
       <choice type="string" value="grid"></choice>
@@ -1215,7 +1013,7 @@ plotxy utility-threshold plot-y-max</update>
     <slider x="205" step="1" y="730" max="10" width="250" display="road-multiplier" height="50" min="0" direction="Horizontal" default="3.0" variable="road-multiplier"></slider>
     <switch x="125" y="710" height="40" on="false" variable="real-travel?" width="90" display="real-travel?"></switch>
     <button x="705" y="470" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="100">draw-roads</button>
-    <button x="700" y="515" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="110">remove-roads</button>
+    <button x="700" y="515" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="106">erase-patch</button>
     <button x="695" y="560" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="100">grow-parks</button>
     <plot x="1355" autoPlotX="true" yMax="1.0" autoPlotY="true" y="40" xMin="0.0" height="175" legend="false" xMax="1.0" yMin="0.0" width="230" display="segregation">
       <setup></setup>
