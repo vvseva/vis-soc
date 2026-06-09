@@ -111,7 +111,7 @@ data |>
 
 
 ```{r}
-create_experiment_template(model_path, insert_at_cursor = TRUE)
+create_experiment_template(model_path, print = TRUE)
 
 setup_file <- create_experiment(
   name = "Auto-Generated Analysis",
