@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <model version="NetLogo 7.0.4" snapToGrid="true">
-  <code><![CDATA[extensions [ gis ]
+  <code><![CDATA[extensions [gis]
 
 breed [families family]
 breed [venues venue]
 breed [parks park]
-undirected-link-breed [rays ray]
 
 globals [
   percent-similar
@@ -46,6 +45,11 @@ patches-own [
   my-commuters
   tract-habitable-count  
   is-habitable?      ;; OPTIMIZATION: O(1) checking if patch allows movement
+  
+  cached-reachable-habitable
+  cached-reachable-roads
+  cached-reachable-venues
+  cached-reachable-parks
 ]
 
 families-own [
@@ -118,13 +122,15 @@ to setup
   setup-families
   
   apply-intervention-scenario
+  update-patch-caches
 
   evaluate-venues-and-parks 
   update-families
   update-globals
+
   reset-ticks
   display 
-end
+end  
 
 to go
   ;; Check if sliders have changed
@@ -140,6 +146,7 @@ to go
   if environment-changed? [
     evaluate-venues-and-parks
     initialize-tract-habitable-counts
+    update-patch-caches
     set environment-changed? false
   ]
   
@@ -227,7 +234,7 @@ to setup-families
         [ set color item 0 colors ] 
         [ set color item (1 + random (number-of-ethnicities - 1)) colors ] 
         set shape "person"
-        set size 1.5
+        set size 1
         set happy? true
         
         set my-catchment-distance venue-catchment-distance
@@ -566,52 +573,34 @@ to evaluate-venues-and-parks
   ask patches with [is-road?] [ set my-commuters (turtle-set nobody) ]
 
   ask families [
-    let reachable-area get-reachable-network patch-here travel-distance road-multiplier
+    let p patch-here
+    set visited-roads [cached-reachable-roads] of p
+    let possible-venues [cached-reachable-venues] of p
+    set visited-parks [cached-reachable-parks] of p
     
-    set visited-roads reachable-area with [is-road?]
-
-    ;; VENUES
-    let possible-venues venues-on reachable-area
-    let open-venues-group possible-venues with [color = [color] of myself]
-    let open-venues-adventure possible-venues with [color != [color] of myself and my-venue-exclusivity < [my-adventurousness] of myself]
-
-    let open-venues (turtle-set open-venues-group open-venues-adventure)
-    set visited-venues open-venues with [1 - my-venue-obligatoriness < [my-commitment] of myself]
+    ;; Use local variables to avoid repeated 'myself' calls
+    let my-color color
+    let my-adv my-adventurousness
+    let my-com my-commitment
     
-    ;; PARKS
-    set visited-parks parks-on reachable-area
+    let open-venues possible-venues with [(color = my-color) or (my-venue-exclusivity < my-adv)]
+    set visited-venues open-venues with [(1 - my-venue-obligatoriness) < my-com]
     
-    ;; Add to attendees
     let family-agent self
-    if any? visited-venues [
-      ask visited-venues [ set my-attendees (turtle-set my-attendees family-agent) ]
-    ]
-    if any? visited-parks [
-      ask visited-parks [ set my-attendees (turtle-set my-attendees family-agent) ]
-    ]
-    if any? visited-roads [
-      ask visited-roads [ set my-commuters (turtle-set my-commuters family-agent) ]
-    ]
-  ]
-  
-  rebuild-all-rays
-end
-
-to rebuild-all-rays
-  ask rays [ die ]
-  ask families [
-    let my-candidates other families in-radius neighborhood-distance with [who > [who] of myself]
-    ask my-candidates [
-      if has-line-of-sight? myself [
-        create-ray-with myself [ hide-link ]
-      ]
-    ]
+    if any? visited-venues [ ask visited-venues [ set my-attendees (turtle-set my-attendees family-agent) ] ]
+    if any? visited-parks [ ask visited-parks [ set my-attendees (turtle-set my-attendees family-agent) ] ]
+    if any? visited-roads [ ask visited-roads [ set my-commuters (turtle-set my-commuters family-agent) ] ]
   ]
 end
 
 to update-families
+  let check-los? any? patches with [is-river?]
   ask families [
-    let visible-candidates ray-neighbors
+    let visible-candidates other families in-radius neighborhood-distance
+    
+    if check-los? [
+      set visible-candidates visible-candidates with [has-line-of-sight? myself]
+    ]
     
     set total-nearby count visible-candidates
     set similar-nearby count visible-candidates with [color = [color] of myself]
@@ -659,13 +648,21 @@ to update-families
     let weighted-score (val1 * beta1-neighbors) + (val2 * beta2-venue-group) + (val3 * beta3-venue-loc) + (val4 * beta4-home-venues) + (val5 * beta5-park-group) + (val6 * beta6-roads-group)
 
     ifelse weights-sum > 0 [ set my-utility (weighted-score / weights-sum) + eps ] [ set my-utility eps ]
+    
+    ifelse happy? 
+      [ set shape "square" ]
+      [ set shape "x" ]
   ]
 end
 
 to-report calculate-similarity [ target-group ]
   if not any? target-group [ report 0.5 ]
   let total-count count target-group
-  let similar-count count target-group with [color = [color] of myself]
+  
+  ;; Optimization: Local variable assignment
+  let my-color color
+  let similar-count count target-group with [color = my-color]
+  
   report (similar-count / total-count)
 end
 
@@ -685,15 +682,13 @@ to move-unhappy-families
 end
 
 to find-new-spot
-  ;; Evaluate exactly which patches are reachable by walking + driving network
-  let reachable-area get-reachable-network patch-here travel-distance road-multiplier
-  let candidates reachable-area with [is-habitable? and not any? turtles-on self]
+  ;; O(1) lookup instead of running a flood-fill algorithm!
+  let candidates ([cached-reachable-habitable] of patch-here) with [not any? turtles-on self]
   
   if not any? candidates [ stop ]
   let target one-of candidates
   
   if target != nobody [
-    ;; Draw simple line for traffic heatmapping (avoids heavy A* pathing calculations)
     let final-path get-path-patches target
     ask final-path with [is-road?] [ set traffic traffic + 1 ]
     
@@ -708,53 +703,54 @@ to find-new-spot
       ask visited-roads [ set my-commuters my-commuters with [self != family-agent] ]
     ]
     
-    ask my-rays [ die ]
     move-to target
 
-    ;; Evaluate dynamically at the new location
-    let new-reachable-area get-reachable-network patch-here travel-distance road-multiplier
-    set visited-roads new-reachable-area with [is-road?]
+    ;; Evaluate dynamically at the new location using the NEW patch's cache
+    let p patch-here
+    set visited-roads [cached-reachable-roads] of p
+    let possible-venues [cached-reachable-venues] of p
+    set visited-parks [cached-reachable-parks] of p
 
-    let possible-venues venues-on new-reachable-area
-    let open-venues-group possible-venues with [color = [color] of myself]
-    let open-venues-adventure possible-venues with [color != [color] of myself and my-venue-exclusivity < [my-adventurousness] of myself]
-    let open-venues (turtle-set open-venues-group open-venues-adventure)
+    let my-color color
+    let my-adv my-adventurousness
+    let my-com my-commitment
     
-    set visited-venues open-venues with [1 - my-venue-obligatoriness < [my-commitment] of myself]
-    set visited-parks parks-on new-reachable-area
+    let open-venues possible-venues with [(color = my-color) or (my-venue-exclusivity < my-adv)]
+    set visited-venues open-venues with [(1 - my-venue-obligatoriness) < my-com]
 
-    if any? visited-venues [
-      ask visited-venues [ set my-attendees (turtle-set my-attendees family-agent) ]
-    ]
-    if any? visited-parks [
-      ask visited-parks [ set my-attendees (turtle-set my-attendees family-agent) ]
-    ]
-    if any? visited-roads [
-      ask visited-roads [ set my-commuters (turtle-set my-commuters family-agent) ]
-    ]
-
-    let my-candidates other families in-radius neighborhood-distance
-    ask my-candidates [
-      if has-line-of-sight? myself [
-        create-ray-with myself [ hide-link ]
-      ]
-    ]
+    if any? visited-venues [ ask visited-venues [ set my-attendees (turtle-set my-attendees family-agent) ] ]
+    if any? visited-parks [ ask visited-parks [ set my-attendees (turtle-set my-attendees family-agent) ] ]
+    if any? visited-roads [ ask visited-roads [ set my-commuters (turtle-set my-commuters family-agent) ] ]
   ]
 end
 
 to-report has-line-of-sight? [ target ]
   let dist distance target
   if dist = 0 [ report true ]
-  let ang towards target
-  let step 1.0
-  let current-dist step
-  while [current-dist < dist] [
-    let p patch-at-heading-and-distance ang current-dist
-    if p = nobody [ report false ]
-    if [is-river?] of p [ report false ]
-    set current-dist current-dist + step
+  
+  ;; FAST PASS: Bounding Box Check. If there are no rivers in the rectangle 
+  ;; between the agent and the target, skip the expensive raycast loop entirely.
+  let min-x min list pxcor [pxcor] of target
+  let max-x max list pxcor [pxcor] of target
+  let min-y min list pycor [pycor] of target
+  let max-y max list pycor [pycor] of target
+  
+  ifelse not any? patches with [pxcor >= min-x and pxcor <= max-x and pycor >= min-y and pycor <= max-y and is-river?] [
+    report true
+  ]  
+  [
+    ;; SLOW PASS: Only fallback to raycasting if a river is within the bounding box
+    let ang towards target
+    let step 1.0
+    let current-dist step
+    while [current-dist < dist] [
+      let p patch-at-heading-and-distance ang current-dist
+      if p = nobody [ report false ]
+      if [is-river?] of p [ report false ]
+      set current-dist current-dist + step
+    ]
+    report true
   ]
-  report true
 end
 
 to-report get-path-patches [ target ]
@@ -834,6 +830,18 @@ to update-globals
   
   calculate-segregation-dimensions
 end
+
+to update-patch-caches
+  ask patches with [is-habitable?] [
+    let reachable get-reachable-network self travel-distance road-multiplier
+    set cached-reachable-habitable reachable with [is-habitable?]
+    set cached-reachable-roads reachable with [is-road?]
+    set cached-reachable-venues venues-on reachable
+    set cached-reachable-parks parks-on reachable
+  ]
+end
+
+
 
 ;; --- MANUAL PLACEMENT ---
 
@@ -962,14 +970,14 @@ end]]></code>
         <update>plot percent-unhappy</update>
       </pen>
     </plot>
-    <slider x="15" step="10" y="62" max="100" width="225" display="density-percent" height="50" min="1" direction="Horizontal" default="51.0" variable="density-percent"></slider>
+    <slider x="15" step="10" y="62" max="100" width="225" display="density-percent" height="50" min="1" direction="Horizontal" default="70.0" variable="density-percent"></slider>
     <slider x="15" step="1.0" y="119" max="100.0" width="225" display="%-similar-wanted" height="50" min="0.0" direction="Horizontal" default="30.0" variable="%-similar-wanted" units="%"></slider>
     <button x="34" y="14" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="80" display="setup">setup</button>
     <button x="124" y="14" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="80" display="go">go</button>
     <slider x="35" step="1" y="605" max="5" width="192" display="number-of-ethnicities" height="50" min="2" direction="Horizontal" default="2.0" variable="number-of-ethnicities"></slider>
     <slider x="15" step="1" y="176" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
-    <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="2.0" variable="neighborhood-distance"></slider>
-    <slider x="815" step="1" y="15" max="20" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="20.0" variable="venues-number"></slider>
+    <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="3.0" variable="neighborhood-distance"></slider>
+    <slider x="815" step="1" y="15" max="20" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="9.0" variable="venues-number"></slider>
     <slider x="815" step="1" y="103" max="20" width="173" display="venue-catchment-distance" height="50" min="0" direction="Horizontal" default="10.0" variable="venue-catchment-distance"></slider>
     <slider x="815" step="0.1" y="178" max="1" width="222" display="venue-exclusivity" height="50" min="0.0" direction="Horizontal" default="1.0" variable="venue-exclusivity"></slider>
     <chooser x="815" y="316" height="60" variable="new-venue-color" current="0" width="157" display="new-venue-color">
