@@ -32,6 +32,10 @@ globals [
   last-travel-distance
   last-road-multiplier
   last-neighborhood-distance
+  
+  ;; VISUALIZATION STATE
+  show-segregation-grid?
+  is-visualizing-segregation?
 ]
 
 patches-own [ 
@@ -44,12 +48,16 @@ patches-own [
   my-park-id
   my-commuters
   tract-habitable-count  
-  is-habitable?      ;; OPTIMIZATION: O(1) checking if patch allows movement
+  is-habitable?      
   
   cached-reachable-habitable
   cached-reachable-roads
   cached-reachable-venues
   cached-reachable-parks
+  
+  ;; GRID SEGREGATION VARIABLES
+  grid-id
+  grid-segregation
 ]
 
 families-own [
@@ -101,6 +109,9 @@ to setup
   set last-road-multiplier road-multiplier
   set last-neighborhood-distance neighborhood-distance
 
+  set show-segregation-grid? false
+  set is-visualizing-segregation? false
+
   ;; 3. Draw the Map
   no-display
   draw-selected-scenario
@@ -115,6 +126,7 @@ to setup
   ]
   ask habitable-patches [ set is-habitable? true ]
 
+  setup-grid-areas
   initialize-tract-habitable-counts
 
   setup-parks
@@ -127,6 +139,8 @@ to setup
   evaluate-venues-and-parks 
   update-families
   update-globals
+  
+  update-grid-visualization
 
   reset-ticks
   display 
@@ -153,14 +167,66 @@ to go
   move-unhappy-families
   update-families
   update-globals
+  update-grid-visualization
   tick
 end
 
+;; --- GRID ARCHITECTURE ---
+
+to setup-grid-areas
+  let w (max-pxcor - min-pxcor + 1)
+  let h (max-pycor - min-pycor + 1)
+  
+  ask patches [
+    let col floor ( (pxcor - min-pxcor) / (w / 3) )
+    if col > 2 [ set col 2 ] 
+    
+    let row floor ( (pycor - min-pycor) / (h / 3) )
+    if row > 2 [ set row 2 ]
+    
+    set grid-id (row * 3) + col
+    set grid-segregation 0
+  ]
+end
+
+to toggle-segregation-grid
+  set show-segregation-grid? not show-segregation-grid?
+  update-grid-visualization
+end
+
+to update-grid-visualization
+  ifelse show-segregation-grid? [
+    ;; Save colors only upon initial toggle
+    if not is-visualizing-segregation? [
+      ask patches [ set saved-color pcolor ]
+      set is-visualizing-segregation? true
+    ]
+    
+    let max-seg max [grid-segregation] of patches
+    let min-seg min [grid-segregation] of patches
+    
+    ifelse max-seg = min-seg [
+      ask patches [ set pcolor blue ]
+    ] [
+      ask patches [ 
+        ;; scale-color maps values closer to range1 (min-seg) to lighter colors
+        ;; and values closer to range2 (max-seg) to darker colors
+        set pcolor scale-color blue grid-segregation min-seg max-seg 
+      ]
+    ]
+  ] [
+    ;; Restore colors if visualization is toggled off
+    if is-visualizing-segregation? [
+      ask patches [ set pcolor saved-color ]
+      set is-visualizing-segregation? false
+    ]
+  ]
+end
+
+
 ;; --- ROAD TRAVERSAL ALGORITHM ---
 
-;; Calculates the exact reachable polygon using a flood-fill budget methodology
 to-report get-reachable-network [ center-patch max-base-dist road-mult ]
-  ;; 1. Base travel radius (Flood fill step-by-step respecting rivers)
   let active-patches (patch-set center-patch)
   let reached-patches active-patches
   let current-step 0
@@ -172,12 +238,9 @@ to-report get-reachable-network [ center-patch max-base-dist road-mult ]
     set current-step current-step + 1
   ]
   
-  ;; 2. Identify initial roads within base walking distance
   let active-roads reached-patches with [is-road?]
   let found-roads active-roads
   
-  ;; 3. Propagate strictly along roads using the multiplier budget
-  ;; For each propagation step, budget decreases by 1
   let budget (max-base-dist * road-mult)
   while [budget > 0 and any? active-roads] [
     let next-roads (patch-set [neighbors with [is-road? and not is-river?]] of active-roads) with [not member? self found-roads]
@@ -186,9 +249,7 @@ to-report get-reachable-network [ center-patch max-base-dist road-mult ]
     set budget budget - 1
   ]
   
-  ;; 4. Include off-road access (patches immediately adjacent to reached roads so agents can step off to a venue)
   let off-road-access (patch-set [neighbors with [not is-river?]] of found-roads)
-  
   report (patch-set reached-patches found-roads off-road-access)
 end
 
@@ -406,7 +467,6 @@ end
 to load-gis-logic [ dataset ]
   foreach gis:feature-list-of dataset [ feature ->
     ask patches gis:intersecting feature [ 
-      ;; Force road to overwrite river
       set is-road? true 
       set is-river? false
       set pcolor brown
@@ -578,7 +638,6 @@ to evaluate-venues-and-parks
     let possible-venues [cached-reachable-venues] of p
     set visited-parks [cached-reachable-parks] of p
     
-    ;; Use local variables to avoid repeated 'myself' calls
     let my-color color
     let my-adv my-adventurousness
     let my-com my-commitment
@@ -659,7 +718,6 @@ to-report calculate-similarity [ target-group ]
   if not any? target-group [ report 0.5 ]
   let total-count count target-group
   
-  ;; Optimization: Local variable assignment
   let my-color color
   let similar-count count target-group with [color = my-color]
   
@@ -682,7 +740,6 @@ to move-unhappy-families
 end
 
 to find-new-spot
-  ;; O(1) lookup instead of running a flood-fill algorithm!
   let candidates ([cached-reachable-habitable] of patch-here) with [not any? turtles-on self]
   
   if not any? candidates [ stop ]
@@ -705,7 +762,6 @@ to find-new-spot
     
     move-to target
 
-    ;; Evaluate dynamically at the new location using the NEW patch's cache
     let p patch-here
     set visited-roads [cached-reachable-roads] of p
     let possible-venues [cached-reachable-venues] of p
@@ -728,8 +784,6 @@ to-report has-line-of-sight? [ target ]
   let dist distance target
   if dist = 0 [ report true ]
   
-  ;; FAST PASS: Bounding Box Check. If there are no rivers in the rectangle 
-  ;; between the agent and the target, skip the expensive raycast loop entirely.
   let min-x min list pxcor [pxcor] of target
   let max-x max list pxcor [pxcor] of target
   let min-y min list pycor [pycor] of target
@@ -739,7 +793,6 @@ to-report has-line-of-sight? [ target ]
     report true
   ]  
   [
-    ;; SLOW PASS: Only fallback to raycasting if a river is within the bounding box
     let ang towards target
     let step 1.0
     let current-dist step
@@ -778,29 +831,48 @@ to calculate-segregation-dimensions
   
   if pop-x = 0 or pop-y = 0 or pop-t = 0 [ stop ]
 
+  ;; 1. EXPOSURE
   let iso-sum sum [ similar-nearby / total-nearby ] of families with [color = gx-color and total-nearby > 0]
   set index-exposure (iso-sum / pop-x)
 
+  ;; 2. DISSIMILARITY (Kept on standard tracts for baseline consistency)
   let tracts patches with [ (pxcor mod 10 = 0) and (pycor mod 10 = 0) ]
-  let total-area count habitable-patches
-  
   let d-sum 0
-  let delta-sum 0
   
   ask tracts [
     let local-fam families in-radius 5
     let x_i count local-fam with [color = gx-color]
     let y_i count local-fam with [color != gx-color]
-    let a_i tract-habitable-count  
-    
     set d-sum d-sum + abs ( (x_i / pop-x) - (y_i / pop-y) )
-    if total-area > 0 [
-       set delta-sum delta-sum + abs ( (x_i / pop-x) - (a_i / total-area) )
-    ]
   ]
   set index-dissimilarity (d-sum / 2)
+  
+  ;; 3. CONCENTRATION (Calculated on the new 9-Area Grid System)
+  let total-area count habitable-patches
+  let delta-sum 0
+  let current-grid 0
+  
+  while [current-grid < 9] [
+    let g-patches patches with [grid-id = current-grid]
+    let g-fam families-on g-patches
+    
+    let x_i count g-fam with [color = gx-color]
+    let a_i count g-patches with [is-habitable?]
+    
+    let local-delta 0
+    if pop-x > 0 and total-area > 0 [
+      set local-delta abs ( (x_i / pop-x) - (a_i / total-area) )
+    ]
+    
+    ;; Map localized concentration directly to patches in this grid for visualization
+    ask g-patches [ set grid-segregation local-delta ]
+    
+    set delta-sum delta-sum + local-delta
+    set current-grid current-grid + 1
+  ]
   set index-concentration (delta-sum / 2)
   
+  ;; 4. CLUSTERING
   let n_random 150  
   let sample-x n-of (ifelse-value (pop-x > n_random) [n_random] [pop-x]) families with [color = gx-color]
   let sample-y n-of (ifelse-value (pop-y > n_random) [n_random] [pop-y]) families with [color != gx-color]
@@ -865,6 +937,7 @@ to place-temporary-venue
       ask patches in-radius venue-catchment-distance [ set pcolor lime ]
     ]
     while [mouse-down?] [ every 0.1 [] ]
+    set environment-changed? true
     display
   ]
 end
@@ -877,6 +950,7 @@ to confirm-venue-placement
     evaluate-venues-and-parks
     update-families
     update-globals
+    update-grid-visualization
     user-message "Venue Confirmed."
   ]
   [ user-message "No temporary venue found to confirm." ]
@@ -900,20 +974,15 @@ end
 to erase-patch
   if mouse-down? [
     ask patch mouse-xcor mouse-ycor [
-      ;; Reset color to background
       set pcolor black
-      
-      ;; Turn off all properties
       set is-road? false 
       set is-river? false
       set is-green? false
       set traffic 0
       set my-park-id nobody
       
-      ;; Clean up network arrays
       ask parks [ set my-patches my-patches with [self != myself] ]
       
-      ;; Destroy structures
       ask venues-here [ die ]
       ask parks-here [ die ]
     ]
@@ -977,7 +1046,7 @@ end]]></code>
     <slider x="35" step="1" y="605" max="5" width="192" display="number-of-ethnicities" height="50" min="2" direction="Horizontal" default="2.0" variable="number-of-ethnicities"></slider>
     <slider x="15" step="1" y="176" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
     <slider x="244" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="3.0" variable="neighborhood-distance"></slider>
-    <slider x="815" step="1" y="15" max="20" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="9.0" variable="venues-number"></slider>
+    <slider x="815" step="1" y="15" max="20" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="0.0" variable="venues-number"></slider>
     <slider x="815" step="1" y="103" max="20" width="173" display="venue-catchment-distance" height="50" min="0" direction="Horizontal" default="10.0" variable="venue-catchment-distance"></slider>
     <slider x="815" step="0.1" y="178" max="1" width="222" display="venue-exclusivity" height="50" min="0.0" direction="Horizontal" default="1.0" variable="venue-exclusivity"></slider>
     <chooser x="815" y="316" height="60" variable="new-venue-color" current="0" width="157" display="new-venue-color">
@@ -1048,13 +1117,13 @@ plotxy utility-threshold plot-y-max</update>
       </pen>
     </plot>
     <switch x="295" y="450" height="40" on="false" variable="random-seed?" width="110" display="random-seed?"></switch>
-    <slider x="1135" step="0.1" y="235" max="1" width="187" display="beta3-venue-loc" height="50" min="0" direction="Horizontal" default="0.0" variable="beta3-venue-loc"></slider>
-    <slider x="1135" step="0.1" y="290" max="1" width="217" display="beta4-home-venues" height="50" min="0" direction="Horizontal" default="0.0" variable="beta4-home-venues"></slider>
-    <slider x="1135" step="0.1" y="345" max="1" width="250" display="beta5-park-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta5-park-group"></slider>
-    <slider x="1135" step="0.1" y="125" max="1" width="192" display="beta1-neighbors" height="50" min="0" direction="Horizontal" default="0.1" variable="beta1-neighbors"></slider>
+    <slider x="1135" step="0.1" y="235" max="1" width="210" display="beta3-venue-loc" height="50" min="0" direction="Horizontal" default="0.0" variable="beta3-venue-loc"></slider>
+    <slider x="1135" step="0.1" y="290" max="1" width="210" display="beta4-home-venues" height="50" min="0" direction="Horizontal" default="0.0" variable="beta4-home-venues"></slider>
+    <slider x="1135" step="0.1" y="345" max="1" width="210" display="beta5-park-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta5-park-group"></slider>
+    <slider x="1135" step="0.1" y="125" max="1" width="210" display="beta1-neighbors" height="50" min="0" direction="Horizontal" default="0.5" variable="beta1-neighbors"></slider>
     <slider x="1135" step="0.1" y="30" max="1" width="182" display="utility-threshold" height="50" min="0" direction="Horizontal" default="0.1" variable="utility-threshold"></slider>
-    <slider x="1135" step="0.1" y="400" max="1" width="250" display="beta6-roads-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta6-roads-group"></slider>
-    <slider x="15" step="1" y="230" max="100" width="250" display="proportion-majority" height="50" min="0" direction="Horizontal" default="50.0" variable="proportion-majority" units="%"></slider>
+    <slider x="1135" step="0.1" y="400" max="1" width="210" display="beta6-roads-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta6-roads-group"></slider>
+    <slider x="15" step="1" y="230" max="100" width="250" display="proportion-majority" height="50" min="0" direction="Horizontal" default="59.0" variable="proportion-majority" units="%"></slider>
     <chooser x="480" y="735" height="60" variable="intervention-scenario" current="0" width="250" display="intervention-scenario">
       <choice type="string" value="none"></choice>
       <choice type="string" value="central-park"></choice>
@@ -1064,6 +1133,7 @@ plotxy utility-threshold plot-y-max</update>
       <choice type="string" value="majority-spread-minority-hubs"></choice>
       <choice type="string" value="integrated-venues"></choice>
     </chooser>
+    <button x="1360" y="220" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="145">toggle-segregation-grid</button>
   </widgets>
   <info>## ACKNOWLEDGMENT
 
