@@ -398,11 +398,6 @@ library(logolink)
 library(geomtextpath)
 library(colorspace) # Required for lightening the venue colors
 
-library(tidyverse)
-library(logolink)
-library(geomtextpath)
-library(colorspace) 
-
 run_segregation_model <- function(
   model_path,
   repetitions = 3,
@@ -1566,5 +1561,460 @@ experiment13 |> compare_segregation_runs(
   step_to_plot = 100,
   ncol = 2 # Forces them into a single horizontal row
 )
+```
+
+
+## continious 
+
+```{r}
+library(tidyverse)
+library(logolink)
+library(geomtextpath)
+
+# Update this to point to your saved NetLogo file
+model_path <- file.path("netlogo", "roads", "Segregation Interventions.nlogox")
+model_path <- "C:/Users/vsesu60/OneDrive - Linköpings universitet/Documents/R/vis-soc/netlogo/roads/Segregation Interventions.nlogox"
+
+# Define a consistent baseline environment
+base_config <- list(
+  "density-percent" = 70,
+  "number-of-ethnicities" = 2,
+  "proportion-majority" = 60,
+  "neighborhood-distance" = 2,
+  "venues-number" = 0,
+  "venue-catchment-distance" = 7, 
+  "venue-exclusivity" = 1,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "beta5-park-group" = 0.5,
+  "beta6-roads-group" = 0.5,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "road-scenario" = "grid",
+  "road-density" = 25,
+  "road-connectiveness" = 80,
+  "parks-number" = 0 # Disabled to isolate the effect of venues
+)
+```
+
+### integration structured 0-100
+
+```{r}
+exp1_integration <- run_segregation_model(
+  model_path = model_path,
+  repetitions = 5,
+  max_steps = 100,
+  constants = base_config |> 
+    list_modify(
+      `proportion-of-integration` = c(0, 25, 50, 75, 100),
+      `intervention-scenario` = "structured",
+      `venues-number` = 10
+    )
+)
+
+plot_segregation_results(exp1_integration, c("index_concentration", "index_dissimilarity"))
+```
+
+
+### random vs structured
+
+```{r}
+exp2_scenario <- run_segregation_model(
+  model_path = model_path,
+  repetitions = 5,
+  max_steps = 100,
+  constants = base_config |> 
+    list_modify(
+      `proportion-of-integration` = 100,
+      `intervention-scenario` = c("random", "structured"),
+      `venues-number` = 10
+    )
+)
+
+plot_segregation_results(exp2_scenario, c("index_concentration", "index_dissimilarity"))
+```
+
+
+### structured venues 0 - 20
+
+```{r}
+exp3_volume <- run_segregation_model(
+  model_path = model_path,
+  repetitions = 5,
+  max_steps = 100,
+  constants = base_config |> 
+    list_modify(
+      `proportion-of-integration` = 100,
+      `intervention-scenario` = "structured",
+      `venues-number` = c(0, 5, 10, 20)
+    )
+)
+
+plot_segregation_results(exp3_volume, c("index_concentration", "index_dissimilarity"))
+```
+
+
+### all
+
+
+```{r}
+# Run the full factorial design
+exp_full_space <- run_segregation_model(
+  model_path = model_path,
+  repetitions = 3, # Lowered repetitions to manage execution time
+  max_steps = 100,
+  constants = base_config |> 
+    list_modify(
+      `proportion-of-integration` = c(0, 50, 100),
+      `intervention-scenario` = c("random", "structured"),
+      `venues-number` = c(0, 5, 10, 15)
+    )
+)
+
+# Custom visualization for the full space
+exp_full_space$data |> 
+  filter(step <= exp_full_space$max_steps) |> 
+  # Isolate only the columns we need to prevent memory bloat
+  select(
+    run_number, step, 
+    index_concentration, index_dissimilarity, 
+    proportion_of_integration, intervention_scenario, venues_number
+  ) |> 
+  pivot_longer(
+    cols = c(index_concentration, index_dissimilarity),
+    names_to = "index", 
+    values_to = "value"
+  ) |> 
+  mutate(
+    index = str_remove(index, "index_"),
+    # Create a unique group id for each run and metric type to prevent line-bridging
+    grouping_id = str_c(run_number, index)
+  ) |> 
+  ggplot(aes(
+    x = step, 
+    y = value, 
+    color = factor(proportion_of_integration), 
+    group = grouping_id
+  )) +
+  geom_line(aes(linetype = index), alpha = 0.3, linewidth = 1) +
+  # Tidy principle: Create a trellis graph to map multiple dimensions clearly
+  facet_grid(
+    intervention_scenario ~ venues_number, 
+    labeller = labeller(venues_number = label_both)
+  ) +
+  scale_color_viridis_d(option = "plasma", end = 0.8) +
+  labs(
+    title = "Segregation Dynamics Across the Full Intervention Design Space",
+    subtitle = "Rows: Placement Strategy | Columns: Total Venues | Color: Proportion Integrated (%)",
+    x = "Simulation Step",
+    y = "Massey & Denton Index Value",
+    color = "Integration (%)",
+    linetype = "Metric"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    strip.background = element_rect(fill = "gray95", color = NA),
+    strip.text = element_text(face = "bold"),
+    panel.spacing = unit(1, "lines")
+  )
+```
+
+```{r}
+# 1. Run the full factorial design with 100 repetitions
+exp_full_space_100 <- run_segregation_model(
+  model_path = model_path,
+  repetitions = 100, 
+  max_steps = 100,
+  constants = base_config |> 
+    list_modify(
+      `proportion-of-integration` = c(0, 50, 100),
+      `intervention-scenario` = c("random", "structured"),
+      `venues-number` = c(0, 5, 10, 15)
+    )
+)
+
+# 2. Extract and tidy the base data for individual runs
+plot_data <- exp_full_space_100$data |> 
+  filter(step <= exp_full_space_100$max_steps) |> 
+  select(
+    run_number, step, 
+    index_concentration, index_dissimilarity, 
+    proportion_of_integration, intervention_scenario, venues_number
+  ) |> 
+  pivot_longer(
+    cols = c(index_concentration, index_dissimilarity),
+    names_to = "index", 
+    values_to = "value"
+  ) |> 
+  mutate(
+    index = str_remove(index, "index_"),
+    # grouping_id ensures geom_line doesn't bridge different runs or metrics together
+    grouping_id = str_c(run_number, index) 
+  )
+
+# 3. Calculate the mean values per condition and step
+mean_data <- plot_data |> 
+  group_by(step, index, proportion_of_integration, intervention_scenario, venues_number) |> 
+  summarize(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
+
+# 4. Build the layered plot
+p <- ggplot() +
+  # Layer 1: Individual runs (highly transparent to show density/variance)
+  geom_line(
+    data = plot_data,
+    aes(
+      x = step, 
+      y = value, 
+      color = factor(proportion_of_integration), 
+      group = grouping_id,
+      linetype = index
+    ),
+    alpha = 0.05
+  ) +
+  # Layer 2: Condition Means (fully opaque to anchor the trend)
+  geom_line(
+    data = mean_data,
+    aes(
+      x = step, 
+      y = mean_value, 
+      color = factor(proportion_of_integration),
+      linetype = index
+    ),
+    alpha = 1,
+    linewidth = 1.2
+  ) +
+  facet_grid(
+    intervention_scenario ~ venues_number, 
+    labeller = labeller(venues_number = label_both)
+  ) +
+  scale_color_viridis_d(option = "plasma", end = 0.8) +
+  labs(
+    title = "Segregation Dynamics: 100 Repetitions per Condition",
+    subtitle = "Rows: Placement Strategy | Columns: Total Venues | Color: Proportion Integrated (%)",
+    x = "Simulation Step",
+    y = "Massey & Denton Index Value",
+    color = "Integration (%)",
+    linetype = "Metric"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    strip.background = element_rect(fill = "gray95", color = NA),
+    strip.text = element_text(face = "bold"),
+    panel.spacing = unit(1, "lines")
+  )
+
+# 5. Save the plot to disk
+ggsave(
+  filename = "segregation_design_space_100reps.png", 
+  plot = p, 
+  width = 14,    # Wide enough to accommodate the 4 columns
+  height = 8, 
+  dpi = 300, 
+  bg = "white"   # Ensures background isn't transparent in some viewers
+)
+```
+
+```{r}
+metrics_to_plot <- c("index_exposure", "index_dissimilarity", "index_clustering", "index_concentration")
+
+# ==============================================================================
+# EXPERIMENT 1: VENUE PLACEMENT & INTEGRATION
+# ==============================================================================
+
+# 1. Run the simulation
+exp_venues_100 <- run_segregation_model(
+  model_path = model_path,
+  repetitions = 100, 
+  max_steps = 125,
+  constants = base_config |> 
+    list_modify(
+      `proportion-of-integration` = c(0, 25, 50, 75, 100),
+      `intervention-scenario` = c("random", "structured"),
+      `venues-number` = c(0, 3, 9, 18)
+    )
+)
+
+# 2. Save pure simulation data to CSV
+write_csv(exp_venues_100$data, "venue_experiments_100reps.csv")
+
+# 3. Tidy the data for plotting
+venue_data_long <- exp_venues_100$data |> 
+  filter(step <= exp_venues_100$max_steps) |> 
+  select(
+    run_number, step, 
+    all_of(metrics_to_plot), 
+    proportion_of_integration, intervention_scenario, venues_number
+  ) |> 
+  pivot_longer(
+    cols = starts_with("index_"),
+    names_to = "index", 
+    values_to = "value"
+  )
+
+# 4. Iterate and plot each metric separately
+walk(metrics_to_plot, \(current_metric) {
+  
+  plot_data <- venue_data_long |> filter(index == current_metric)
+  
+  mean_data <- plot_data |> 
+    group_by(step, proportion_of_integration, intervention_scenario, venues_number) |> 
+    summarize(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
+  
+  metric_name <- str_to_title(str_replace(current_metric, "index_", ""))
+  
+  p <- ggplot() +
+    # Layer 1: Individual variance (solid lines, low alpha)
+    geom_line(
+      data = plot_data,
+      aes(
+        x = step, 
+        y = value, 
+        color = factor(proportion_of_integration), 
+        group = run_number
+      ),
+      alpha = 0.05,
+      linetype = "solid"
+    ) +
+    # Layer 2: Mean trend with embedded textpath
+    geomtextpath::geom_textpath(
+      data = mean_data,
+      aes(
+        x = step, 
+        y = mean_value, 
+        color = factor(proportion_of_integration),
+        label = paste0(proportion_of_integration, "%")
+      ),
+      offset = unit(5, "pt"),
+      gap = TRUE,
+      text_smoothing = 95,
+      alpha = 1,
+      linewidth = 1.2,
+      linetype = "solid"
+    ) +
+    facet_grid(
+      intervention_scenario ~ venues_number, 
+      labeller = labeller(venues_number = label_both)
+    ) +
+    scale_color_viridis_d(option = "plasma", end = 0.8) +
+    labs(
+      title = paste(metric_name, "Dynamics (Venue Interventions)"),
+      subtitle = "Rows: Strategy | Columns: Total Venues | Labeled by Integration %",
+      x = "Simulation Step",
+      y = metric_name
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "none", # Legend removed since lines are directly labeled
+      strip.background = element_rect(fill = "gray95", color = NA),
+      strip.text = element_text(face = "bold"),
+      panel.spacing = unit(1, "lines")
+    )
+  
+  ggsave(
+    filename = paste0("plot_venues_", current_metric, ".png"), 
+    plot = p, 
+    width = 12, height = 8, dpi = 300, bg = "white"
+  )
+})
+
+
+# ==============================================================================
+# EXPERIMENT 2: ROAD INFRASTRUCTURE
+# ==============================================================================
+
+# 1. Run the road simulation (Isolating roads by turning venues off)
+exp_roads_100 <- run_segregation_model(
+  model_path = model_path,
+  repetitions = 100, 
+  max_steps = 100,
+  constants = base_config |> 
+    list_modify(
+      `road-density` = c(25, 50, 100),
+      `road-connectiveness` = c(50, 75, 100),
+      `venues-number` = 0 
+    )
+)
+
+# 2. Save road simulation data to CSV
+write_csv(exp_roads_100$data, "road_experiments_100reps.csv")
+
+# 3. Tidy the data for plotting
+road_data_long <- exp_roads_100$data |> 
+  filter(step <= exp_roads_100$max_steps) |> 
+  select(
+    run_number, step, 
+    all_of(metrics_to_plot), 
+    road_density, road_connectiveness
+  ) |> 
+  pivot_longer(
+    cols = starts_with("index_"),
+    names_to = "index", 
+    values_to = "value"
+  )
+
+# 4. Iterate and plot each metric separately
+walk(metrics_to_plot, \(current_metric) {
+  
+  plot_data <- road_data_long |> filter(index == current_metric)
+  
+  mean_data <- plot_data |> 
+    group_by(step, road_density, road_connectiveness) |> 
+    summarize(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
+  
+  metric_name <- str_to_title(str_replace(current_metric, "index_", ""))
+  
+  p <- ggplot() +
+    geom_line(
+      data = plot_data,
+      aes(
+        x = step, 
+        y = value, 
+        color = factor(road_density), 
+        group = run_number
+      ),
+      alpha = 0.05,
+      linetype = "solid"
+    ) +
+    geomtextpath::geom_textpath(
+      data = mean_data,
+      aes(
+        x = step, 
+        y = mean_value, 
+        color = factor(road_density),
+        label = paste0("Density: ", road_density)
+      ),
+      offset = unit(5, "pt"),
+      gap = TRUE,
+      text_smoothing = 95,
+      alpha = 1,
+      linewidth = 1.2,
+      linetype = "solid"
+    ) +
+    facet_wrap(~ road_connectiveness, labeller = labeller(road_connectiveness = label_both)) +
+    scale_color_viridis_d(option = "viridis", end = 0.8) +
+    labs(
+      title = paste(metric_name, "Dynamics (Road Infrastructure)"),
+      subtitle = "Panels: Road Connectiveness | Labeled by Road Density",
+      x = "Simulation Step",
+      y = metric_name
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",
+      strip.background = element_rect(fill = "gray95", color = NA),
+      strip.text = element_text(face = "bold"),
+      panel.spacing = unit(1, "lines")
+    )
+  
+  ggsave(
+    filename = paste0("plot_roads_", current_metric, ".png"), 
+    plot = p, 
+    width = 12, height = 6, dpi = 300, bg = "white"
+  )
+})
 ```
 
