@@ -31,6 +31,8 @@ globals [
   ;; VISUALIZATION STATE
   show-segregation-grid?
   is-visualizing-segregation?
+  
+  first-venue-patch  ;; Tracks the tick 100 venue to place the tick 200 venue nearby
 ]
 
 patches-own [ 
@@ -110,7 +112,7 @@ to setup
   setup-parks
   setup-families
   
-  ;; Apply interventions using continuous parameters
+  ;; Apply initial interventions
   apply-intervention-scenario
   
   update-patch-caches
@@ -125,6 +127,7 @@ to setup
 end  
 
 to go
+  ;; 1. Check if environmental sliders have changed
   if (travel-distance != last-travel-distance) or 
   (road-multiplier != last-road-multiplier) or 
   (neighborhood-distance != last-neighborhood-distance) [
@@ -134,18 +137,153 @@ to go
     set last-neighborhood-distance neighborhood-distance
   ]
   
+  ;; 2. Apply Dynamic Infrastructure Interventions (Tick 150)
+  if ticks = 150 and intervention-scenario = "dynamic-tick-150" [
+    apply-dynamic-interventions
+    set environment-changed? true
+  ]
+  
+  ;; 3. Apply Chronological Timeline Interventions (Ticks 100, 200, 300)
+  if intervention-scenario = "timeline-experiment" [
+    apply-timeline-interventions
+  ]
+  
+  ;; 4. Update the world map and caches if the topology changed
   if environment-changed? [
+    ask patches [ set is-habitable? false ]
+    set habitable-patches patches with [not is-road? and not is-river?]
+    ask habitable-patches [ set is-habitable? true ]
+    
     evaluate-venues-and-parks
     initialize-tract-habitable-counts
     update-patch-caches
     set environment-changed? false
   ]
   
+  ;; 5. Agent actions and logic
   move-unhappy-families
   update-families
   update-globals
   update-grid-visualization
+  
+  ;; 6. Advance Time (Must remain outside of all brackets!)
   tick
+end
+
+;; --- DYNAMIC INTERVENTIONS (TICK 150) ---
+
+to apply-dynamic-interventions
+  ;; 1. Handle dynamic roads first so venues respect the new topology
+  if dynamic-road-mode != "none" [
+    ifelse dynamic-road-mode = "build-grid" [
+      let max-dim max list (max-pxcor - min-pxcor) (max-pycor - min-pycor)
+      let spacing round (2 + ((100 - dynamic-road-param) / 100) * (max-dim / 2))
+      if spacing < 2 [ set spacing 2 ]
+      
+      ask patches [
+        if (pxcor mod spacing = 0) or (pycor mod spacing = 0) [ 
+          set pcolor brown 
+          set is-road? true
+          set is-river? false
+          ;; Force any families caught under the new road to move next turn
+          ask families-here [ set happy? false ]
+        ]
+      ]
+    ] [
+      if dynamic-road-mode = "erase-random" [
+        ask patches with [is-road?] [
+          if random-float 100 < dynamic-road-param [
+            set is-road? false
+            set pcolor black
+          ]
+        ]
+      ]
+    ]
+  ]
+
+  ;; 2. Handle dynamic venues
+  if dynamic-venue-mode != "none" and dynamic-venues-number > 0 [
+    let venues-created 0
+    let active-colors sublist colors 0 number-of-ethnicities
+    
+    while [venues-created < dynamic-venues-number] [
+      ;; Must dynamically check habitable patches that don't already have venues
+      let available-spots patches with [not is-road? and not is-river? and not any? venues-here]
+      if not any? available-spots [ stop ]
+      
+      let target-patch one-of available-spots
+      let c1 item (random length active-colors) active-colors
+      
+      create-venue-at target-patch c1
+      set venues-created venues-created + 1
+      
+      if dynamic-venue-mode = "integrated" and venues-created < dynamic-venues-number [
+        let available-colors-for-pair remove c1 active-colors
+        let c2 c1 
+        if not empty? available-colors-for-pair [
+          set c2 item (random length available-colors-for-pair) available-colors-for-pair
+        ]
+        
+        set available-spots patches with [not is-road? and not is-river? and not any? venues-here]
+        if any? available-spots [
+          let neighbor min-one-of available-spots [distance target-patch]
+          if neighbor != nobody [
+            create-venue-at neighbor c2
+            set venues-created venues-created + 1
+          ]
+        ]
+      ]
+    ]
+  ]
+end
+
+to apply-timeline-interventions
+  ;; TICK 100: Add 1 Green Venue near the center
+  if ticks = 100 [
+    let target min-one-of habitable-patches [distance patch 0 0]
+    if target != nobody [
+      set first-venue-patch target
+      create-venue-at target (item 1 colors) ;; Index 1 is Green
+      set environment-changed? true
+    ]
+  ]
+  
+  ;; TICK 200: Add 1 Red Venue near the first venue
+  if ticks = 200 [
+    if first-venue-patch != nobody [
+      ;; Find a habitable spot near the first venue that isn't the exact same patch
+      let target one-of [neighbors] of first-venue-patch
+      if target != nobody [
+        create-venue-at target (item 0 colors) ;; Index 0 is Red
+        set environment-changed? true
+      ]
+    ]
+  ]
+  
+  ;; TICK 300: Distribute 16 remaining venues (1 red, 1 green) across the 8 empty districts
+  if ticks = 300 [
+    let initial-grid -1
+    if first-venue-patch != nobody [ set initial-grid [grid-id] of first-venue-patch ]
+    
+    let g 0
+    while [g < 9] [
+      ;; Skip the district where we already placed the first two venues
+      if g != initial-grid [
+        let g-patches patches with [grid-id = g and is-habitable? and not any? venues-here]
+        
+        ;; Ensure there's enough room to place a pair of venues
+        if count g-patches >= 2 [
+          let p1 one-of g-patches
+          create-venue-at p1 (item 0 colors) 
+          
+          let p2 one-of g-patches with [self != p1]
+          create-venue-at p2 (item 1 colors) 
+        ]
+      ]
+      set g g + 1
+    ]
+    set environment-changed? true
+  ]
 end
 
 ;; --- GRID ARCHITECTURE ---
@@ -225,7 +363,6 @@ to-report get-reachable-network [ center-patch max-base-dist road-mult ]
   report (patch-set reached-patches found-roads off-road-access)
 end
 
-
 ;; --- GENERATION & SETUP ---
 
 to setup-parks
@@ -282,10 +419,8 @@ to draw-selected-scenario
     set my-commuters (turtle-set nobody)
   ]
 
-  ;; Procedural Grid Generation Based on Parameters
   if road-density > 0 [
     let max-dim max list (max-pxcor - min-pxcor) (max-pycor - min-pycor)
-    ;; Map density 100 -> spacing of 2; density 1 -> spacing of max-dim/2
     let spacing round (2 + ((100 - road-density) / 100) * (max-dim / 2))
     if spacing < 2 [ set spacing 2 ]
     
@@ -296,7 +431,6 @@ to draw-selected-scenario
       ]
     ]
     
-    ;; Randomly degrade the network based on connectiveness
     if road-connectiveness < 100 [
       ask patches with [is-road?] [
         if random-float 100 >= road-connectiveness [
@@ -316,43 +450,32 @@ to initialize-tract-habitable-counts
 end
 
 to apply-intervention-scenario
+  if intervention-scenario = "dynamic-tick-150" [ stop ]
+  
   ask venues [ die ]
   
   let venues-created 0
-  
-  ;; Constrain colors to only the number currently active in the model
   let active-colors sublist colors 0 number-of-ethnicities
-  
-  ;; Create a shuffled queue of the 9 grid areas to ensure even distribution
   let grid-sequence shuffle (n-values 9 [ i -> i ])
   
   while [venues-created < venues-number] [
     let target-patch nobody
-    
-    ;; Only look at patches that don't already have a venue
     let available-spots habitable-patches with [not any? venues-here]
-    
-    ;; Safety exit: Stop trying to place venues if the map is completely full
     if not any? available-spots [ stop ]
     
     ifelse intervention-scenario = "structured" [
-      ;; Pull the next grid ID from the queue
       let target-grid first grid-sequence
       set grid-sequence but-first grid-sequence
       
-      ;; If we exhausted all 9 areas, refill the queue for the next pass
       if empty? grid-sequence [ set grid-sequence shuffle (n-values 9 [ i -> i ]) ]
       
-      ;; Find the geographic center of the targeted grid
       let g-patches patches with [grid-id = target-grid]
       let cx floor (mean [pxcor] of g-patches)
       let cy floor (mean [pycor] of g-patches)
       let center-p patch cx cy
       
-      ;; Pick the closest UNOCCUPIED spot to that center
       set target-patch min-one-of available-spots [distance center-p]
     ] [
-      ;; "random" placement on an UNOCCUPIED spot
       set target-patch one-of available-spots
     ]
     
@@ -363,21 +486,15 @@ to apply-intervention-scenario
       create-venue-at target-patch c1
       set venues-created venues-created + 1
       
-      ;; Place a paired venue of a different color to encourage integration
       if is-integrated? and venues-created < venues-number [
         let available-colors-for-pair remove c1 active-colors
-        
-        ;; Fallback: if only 1 ethnicity exists, pair it with the same color
         let c2 c1 
         if not empty? available-colors-for-pair [
           set c2 item (random length available-colors-for-pair) available-colors-for-pair
         ]
         
-        ;; Refresh available spots because we just placed a venue
         set available-spots habitable-patches with [not any? venues-here]
-        
         if any? available-spots [
-          ;; Find the closest empty patch to the first venue
           let neighbor min-one-of available-spots [distance target-patch]
           if neighbor != nobody [
             create-venue-at neighbor c2
@@ -601,7 +718,6 @@ to-report get-path-patches [ target ]
   report p-set
 end
 
-
 ;; --- STATISTICAL METRICS: MASSEY & DENTON (1988) ---
 to calculate-segregation-dimensions
   let gx-color item 0 colors
@@ -724,6 +840,7 @@ to confirm-venue-placement
     update-globals
     update-grid-visualization
     user-message "Venue Confirmed."
+    set environment-changed? true
   ]
   [ user-message "No temporary venue found to confirm." ]
 end
@@ -816,7 +933,7 @@ end]]></code>
     <button x="34" y="14" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="80" display="setup">setup</button>
     <button x="124" y="14" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="80" display="go">go</button>
     <slider x="15" step="1" y="176" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
-    <slider x="815" step="1" y="15" max="20" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="9.0" variable="venues-number"></slider>
+    <slider x="815" step="1" y="15" max="20" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="0.0" variable="venues-number"></slider>
     <slider x="815" step="1" y="103" max="20" width="173" display="venue-catchment-distance" height="50" min="0" direction="Horizontal" default="10.0" variable="venue-catchment-distance"></slider>
     <slider x="815" step="0.1" y="178" max="1" width="222" display="venue-exclusivity" height="50" min="0.0" direction="Horizontal" default="1.0" variable="venue-exclusivity"></slider>
     <chooser x="815" y="316" height="60" variable="new-venue-color" current="0" width="157" display="new-venue-color">
@@ -895,9 +1012,11 @@ plotxy utility-threshold plot-y-max</update>
       <choice type="string" value="city-center-suburbia"></choice>
       <choice type="string" value="connected-communities"></choice>
     </chooser>
-    <chooser x="375" y="735" height="60" variable="intervention-scenario" current="1" width="250" display="intervention-scenario">
+    <chooser x="375" y="735" height="60" variable="intervention-scenario" current="3" width="250" display="intervention-scenario">
       <choice type="string" value="random"></choice>
       <choice type="string" value="structured"></choice>
+      <choice type="string" value="dynamic-tick-150"></choice>
+      <choice type="string" value="timeline-experiment"></choice>
       <choice type="string" value="none"></choice>
       <choice type="string" value="central-park"></choice>
       <choice type="string" value="venue-hubs"></choice>
@@ -908,9 +1027,21 @@ plotxy utility-threshold plot-y-max</update>
     </chooser>
     <slider x="810" step="1" y="580" max="10" width="250" display="parks-number" height="50" min="0" direction="Horizontal" default="0.0" variable="parks-number"></slider>
     <slider x="810" step="1" y="640" max="20" width="255" display="park-catchment-distance" height="50" min="0" direction="Horizontal" default="2.0" variable="park-catchment-distance"></slider>
-    <slider x="630" step="1" y="695" max="100" width="250" display="road-density" height="50" min="0" direction="Horizontal" default="25.0" variable="road-density"></slider>
+    <slider x="630" step="1" y="695" max="100" width="250" display="road-density" height="50" min="0" direction="Horizontal" default="0.0" variable="road-density"></slider>
     <slider x="885" step="1" y="695" max="100" width="250" display="road-connectiveness" height="50" min="0" direction="Horizontal" default="80.0" variable="road-connectiveness"></slider>
     <slider x="630" step="1" y="750" max="100" width="250" display="proportion-of-integration" height="50" min="0" direction="Horizontal" default="50.0" variable="proportion-of-integration"></slider>
+    <chooser x="375" y="805" height="60" variable="dynamic-venue-mode" current="0" width="250" display="dynamic-venue-mode">
+      <choice type="string" value="none"></choice>
+      <choice type="string" value="random"></choice>
+      <choice type="string" value="integrated"></choice>
+    </chooser>
+    <slider x="630" step="1" y="815" max="20" width="250" display="dynamic-venues-number" height="50" min="0" direction="Horizontal" default="9.0" variable="dynamic-venues-number"></slider>
+    <chooser x="375" y="870" height="60" variable="dynamic-road-mode" current="2" width="250" display="dynamic-road-mode">
+      <choice type="string" value="none"></choice>
+      <choice type="string" value="build-grid"></choice>
+      <choice type="string" value="erase-random"></choice>
+    </chooser>
+    <slider x="630" step="1" y="875" max="100" width="250" display="dynamic-road-param" height="50" min="0" direction="Horizontal" default="55.0" variable="dynamic-road-param"></slider>
   </widgets>
   <info>## ACKNOWLEDGMENT
 
