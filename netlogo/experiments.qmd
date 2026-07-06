@@ -2189,18 +2189,395 @@ library(tidyverse)
 library(logolink)
 library(patchwork)
 library(colorspace)
+library(ggnewscale)
+
+model_path <- "C:/Users/vsesu60/OneDrive - Linköpings universitet/Documents/R/vis-soc/netlogo/roads/Segregation Interventions.nlogox"
 
 # -------------------------------------------------------------------------
 # 1. MODEL EXECUTION
 # -------------------------------------------------------------------------
-run_timeline_experiment <- function(model_path, repetitions = 5, max_steps = 400) {
+run_timeline_experiment <- function(model_path, repetitions = 5, max_steps = 800) {
   
   # Base configuration for the timeline experiment
   constants <- list(
   "density-percent" = 70,
   "number-of-ethnicities" = 2,
   "proportion-majority" = 60,
-  "neighborhood-distance" = 2,
+  "neighborhood-distance" = 5,
+  "venues-number" = 0,
+  "venue-catchment-distance" = 7, 
+  "venue-exclusivity" = 1,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "beta5-park-group" = 0,
+  "beta6-roads-group" = 0,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "road-scenario" = "grid",
+  "road-density" = 0,
+  "road-connectiveness" = 80,
+  "parks-number" = 0, # Disabled to isolate the effect of venues
+  "intervention-scenario" = "random",
+  "dynamic-venue-mode" = c("random", "integrated"),
+  "dynamic-venues-number" = 18,
+  "dynamic-road-mode" = "none",
+  "dynamic-road-param" = 0,
+  "intervention-scenario" = "timeline-experiment", # Trigger the NetLogo logic
+  "random-seed?" = TRUE
+  )
+  
+  base_metrics <- c('index-exposure', 'index-dissimilarity', 'index-clustering', 'index-concentration')
+  
+  spatial_metrics <- c(
+    '[pxcor] of patches', '[pycor] of patches', '[pcolor] of patches', 
+    '[grid-id] of patches', '[grid-segregation] of patches', # Required for the 3x3 visualization
+    '[xcor] of families', '[ycor] of families', '[color] of families',
+    '[xcor] of venues', '[ycor] of venues', '[color] of venues'
+  )
+  
+  setup_file <- create_experiment(
+    name = "Timeline Intervention Scenario",
+    repetitions = repetitions,
+    run_metrics_every_step = TRUE,
+    setup = "setup",
+    go = "go",
+    time_limit = max_steps + 10, 
+    metrics = c(base_metrics, spatial_metrics),
+    # metrics = base_metrics,
+    constants = constants
+  )
+  
+  results <- model_path |> run_experiment(
+    setup_file = setup_file, 
+    output = c("table", "lists"),
+    # output = c("table")
+    )
+  
+  # Clean outputs
+  static_params <- names(constants)[lengths(constants) == 1]
+  static_cols <- str_replace_all(static_params, "-", "_")
+  
+  data_out <- results[["table"]] |> select(-any_of(static_cols))
+  lists_out <- results[["lists"]] |> select(-any_of(static_cols))
+  
+  return(list(data = data_out, 
+              lists = lists_out,
+              max_steps = max_steps))
+}
+
+# -------------------------------------------------------------------------
+# 2. VISUALIZATION FUNCTIONS
+# -------------------------------------------------------------------------
+
+
+theme_segregation <- function() {
+  theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 16),
+      plot.subtitle = element_text(color = "gray30", margin = margin(b = 10)),
+      strip.text = element_text(face = "bold", size = 11),
+      panel.grid.minor = element_blank(),
+      panel.grid.major.x = element_blank(),
+      legend.position = "none",
+      text=element_text(size=18)
+    )
+}
+
+plot_timeline_metrics <- function(experiment_output, run_to_plot = 1) {
+  
+  # Contextual intervention points mapped from the abstract
+  # interventions <- data.frame(
+  #   step = c(400, 500, 600),
+  #   label = c("Single Venue", "Paired Venues", "Model-wide Integration")
+  # )
+  
+  interventions <- data.frame(
+    step = c(300),
+    label = c("Venues Added")
+  )
+  
+  plot_data <- experiment_output$data |> 
+    filter(step <= experiment_output$max_steps, step >= 200) |> 
+    # filter(dynamic_venue_mode == "integrated") |> 
+    select(run_number, step, starts_with("index_"), 
+           # dynamic_venue_mode
+           ) |> 
+    select(-index_concentration) |> 
+    pivot_longer(cols = starts_with("index_"), names_to = "index", values_to = "value") |> 
+    mutate(index = str_to_title(str_remove(index, "index_")))
+  
+  mean_data <- plot_data |> 
+    filter(step <= interventions |> pull(step) |> max()) |>
+    group_by(step, index) |> 
+    summarize(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
+  
+  mean_data_text <- plot_data |> 
+    filter(step >= interventions |> pull(step) |> max()) |>
+    group_by(step, index, 
+             # dynamic_venue_mode
+             ) |> 
+    summarize(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
+  
+  ggplot() +
+    geom_line(data = plot_data, aes(x = step, y = value, group = run_number,
+                                    # color = dynamic_venue_mode
+                                    ), alpha = 0.2) +
+    # geom_line(data = mean_data, aes(x = step, y = mean_value), color = "gray40", linewidth = 1) +
+    geomtextpath::geom_textpath(
+      data = mean_data,
+      aes(x = step, y = mean_value, 
+          label = str_glue("Average {index} value")),
+      color = "gray30",
+      # offset = unit(25, "pt"), 
+      gap = TRUE, text_smoothing = 95,
+      alpha = 1, linewidth = 1.2, linetype = "solid",
+      padding = unit(10, "pt"),
+      size = 5
+    ) +
+    geom_vline(data = interventions, aes(xintercept = step), linetype = "dashed", color = "cyan3", alpha = 0.7) +
+    geom_text(data = interventions, aes(x = step + 5, y = Inf, label = label), 
+              hjust = 0, vjust = 1.5, size = 5, color = "cyan3") +
+    geomtextpath::geom_textpath(
+      data = mean_data_text,
+      aes(x = step, y = mean_value, 
+          # color = dynamic_venue_mode, label = dynamic_venue_mode
+          ),
+      # offset = unit(25, "pt"), 
+      gap = TRUE, text_smoothing = 95,
+      alpha = 1, linewidth = 1.2, linetype = "solid",
+      padding = unit(20, "pt"),
+      size = 5
+    ) +
+    facet_wrap(index ~ ., nrow = 3, scales = "free_y") + 
+    labs(
+      title = "Venue-based Intervention Simulation",
+      subtitle = "Macro-level Indices Of Segregation",
+      x = NULL, y = NULL
+    )+
+    theme_segregation()
+}
+
+# -------------------------------------------------------------------------
+# 2. WORLD STATE VISUALIZATION (Middle Row)
+# -------------------------------------------------------------------------
+plot_segregation_world <- function(experiment_output, step_to_plot, subtitle_to_add, run_to_plot = 1) {
+  
+  list_data <- experiment_output$lists |> filter(step == step_to_plot, run_number == run_to_plot)
+  if (nrow(list_data) == 0) stop("No data found for step ", step_to_plot, " in run ", run_to_plot)
+  
+  temp_subtitle <- subtitles_to_add |> filter(steps_to_plot == step_to_plot) |> 
+    pull(subtitles_to_add)
+
+  # Patches
+  patches <- list_data |>
+    select(run_number, step, ends_with("_of_patches")) |>
+    unnest(cols = ends_with("_of_patches")) |>
+    rename_with(~ str_remove(.x, "_of_patches")) |>
+    rename_with(~ str_replace_all(.x, "[\\?\\-]", "_")) |> 
+    mutate(is_road_ = NA,
+           is_river_ = NA) |> 
+    mutate(
+      pcolor = parse_netlogo_color(as.numeric(pcolor)),
+      pxcor = as.numeric(pxcor), pycor = as.numeric(pycor),
+      is_road_ = as.logical(ifelse(is.na(is_road_), FALSE, is_road_)),
+      is_river_ = as.logical(ifelse(is.na(is_river_), FALSE, is_river_)),
+      render_color = case_when(is_river_ ~ "#4682B4", is_road_ ~ "#333333", TRUE ~ pcolor)
+    )
+
+  # Families
+  families <- list_data |>
+    select(run_number, step, ends_with("_of_families")) |>
+    unnest(cols = ends_with("_of_families")) |>
+    rename_with(~ str_remove(.x, "_of_families")) |>
+    mutate(color = parse_netlogo_color(as.numeric(color)), xcor = as.numeric(xcor), ycor = as.numeric(ycor))
+
+  # Venues (Safe Extraction)
+  venue_cols <- names(list_data)[str_detect(names(list_data), "_of_venues$")]
+  has_venues <- FALSE
+  if (length(venue_cols) > 0) {
+    first_venue_list <- list_data[[venue_cols[1]]][[1]]
+    if (length(first_venue_list) > 0 && !is.na(first_venue_list[1])) {
+      venues <- list_data |> select(run_number, step, all_of(venue_cols)) |> unnest(cols = all_of(venue_cols)) |> drop_na()
+      if (nrow(venues) > 0) {
+        has_venues <- TRUE
+        venues <- venues |> rename_with(~ str_remove(.x, "_of_venues")) |> mutate(
+          base_color = parse_netlogo_color(as.numeric(color)),
+          fill_color = colorspace::lighten(base_color, amount = 0.2),
+          xcor = as.numeric(xcor), ycor = as.numeric(ycor)
+        )
+      }
+    }
+  }
+
+  p <- ggplot() +
+    geom_tile(data = patches, aes(x = pxcor, y = pycor, fill = render_color), alpha = 0.7) +
+    geom_point(data = families, aes(x = xcor, y = ycor, color = color), shape = 15, size = 1.2) +
+    scale_fill_identity() + scale_color_identity() + coord_equal() + theme_void() +
+    labs(subtitle = paste("Model View: Tick", step_to_plot, temp_subtitle)) +
+    theme(plot.subtitle = element_text(hjust = 0.5))
+
+  if (has_venues) {
+    p <- p + geom_point(data = venues, aes(x = xcor, y = ycor, fill = fill_color), shape = 24, color = "white", size = 4, stroke = 1)
+  }
+  return(p)
+}
+
+plot_district_grid <- function(experiment_output, step_to_plot, run_to_plot = 1, subtitle_to_plot) {
+  list_data <- experiment_output$lists |> filter(step == step_to_plot, run_number == run_to_plot)
+  
+  # 1. Parse patches for background map AND grid data
+  patches <- list_data |>
+    select(run_number, step, ends_with("_of_patches")) |>
+    unnest(cols = ends_with("_of_patches")) |>
+    rename_with(~ str_remove(.x, "_of_patches")) |>
+    rename_with(~ str_replace_all(.x, "[\\?\\-]", "_")) |>
+    mutate(
+      is_road_ = NA,
+      is_river_ = NA,
+    ) |> 
+    mutate(
+      pxcor = as.numeric(pxcor), pycor = as.numeric(pycor),
+      grid_id = as.numeric(grid_id), grid_segregation = as.numeric(grid_segregation),
+      pcolor = parse_netlogo_color(as.numeric(pcolor)),
+      is_road_ = as.logical(ifelse(is.na(is_road_), FALSE, is_road_)),
+      is_river_ = as.logical(ifelse(is.na(is_river_), FALSE, is_river_)),
+      render_color = case_when(is_river_ ~ "#4682B4", is_road_ ~ "#333333", TRUE ~ pcolor)
+    )
+  
+  # 2. Parse families for background map
+  families <- list_data |>
+    select(run_number, step, ends_with("_of_families")) |>
+    unnest(cols = ends_with("_of_families")) |>
+    rename_with(~ str_remove(.x, "_of_families")) |>
+    mutate(color = parse_netlogo_color(as.numeric(color)), xcor = as.numeric(xcor), ycor = as.numeric(ycor))
+  
+  # 3. Compute the 3x3 grid summaries
+  w_width <- max(patches$pxcor) - min(patches$pxcor) + 1
+  w_height <- max(patches$pycor) - min(patches$pycor) + 1
+  
+  grid_data <- patches |>
+    group_by(grid_id) |>
+    summarize(cx = mean(pxcor), cy = mean(pycor), segregation = mean(grid_segregation, na.rm = TRUE), .groups = "drop")
+  
+  ggplot() +
+    # Layer 1: The faded world state
+    geom_tile(data = patches, aes(x = pxcor, y = pycor, fill = render_color), alpha = 0.2) +
+    scale_fill_identity() + # Locks in the hex codes for the map
+    geom_point(data = families, aes(x = xcor, y = ycor, color = color), shape = 15, size = 1.2, alpha = 0.5) +
+    scale_color_identity() +
+    
+    # Reset the fill scale for the heatmap
+    new_scale_fill() + 
+    
+    # Layer 2: The overlaying Concentration Grid
+    geom_tile(
+      data = grid_data, 
+      aes(x = cx, y = cy, fill = segregation), 
+      color = "goldenrod", linewidth = 1.5, width = w_width/3, height = w_height/3, alpha = 0.8
+    ) +
+    geom_text(
+      data = grid_data, 
+      aes(x = cx, y = cy, label = round(segregation, 3)), 
+      size = 4, fontface = "bold", color = "black"
+    ) +
+    scale_fill_distiller(palette = "YlOrRd", direction = 1, limits = c(0, NA)) +
+    coord_equal() + theme_void() + theme(legend.position = "none") +
+    labs(subtitle = "Concentration (Local Delta)") +
+    theme(plot.subtitle = element_text(hjust = 0.5, color = "gray30"))
+}
+
+
+
+# -------------------------------------------------------------------------
+# 3. EXECUTION AND PATCHWORK ASSEMBLY
+# -------------------------------------------------------------------------
+
+# Run the timeline experiment
+exp_timeline <- run_timeline_experiment(model_path, repetitions = 1, max_steps = 800)
+
+# saveRDS(exp_timeline, file = "exp_timeline.RDS")
+
+saveRDS(exp_timeline2, file = "exp_timeline2.RDS")
+
+
+?saveRDS
+
+# Build the layout components
+target_run <- 2 # Select a specific run to visualize spatially
+steps_to_plot <- c(401, 450, 550, 650)
+subtitles_to_add <- c("Model warm up", "Single Venue", "Paired Venues", "Model-wide Integration")
+
+subtitles_to_add <- tibble(
+  steps_to_plot,
+  subtitles_to_add
+)
+# steps_to_plot <- c(101, 125, 225, 350)
+
+# Generate the top row
+top_metrics <- plot_timeline_metrics(exp_timeline2, run_to_plot = 4)
+
+ggsave("top_metrics10.png", plot = top_metrics, width = 18, height = 14, dpi = 300, bg = "white")
+
+# Map the world state and grid arrays
+world_plots <- map(steps_to_plot, ~ plot_segregation_world(exp_timeline, step_to_plot = .x, run_to_plot = target_run))
+grid_plots <- map(steps_to_plot, ~ plot_district_grid(exp_timeline, step_to_plot = .x, run_to_plot = target_run))
+
+# Assemble the lower panel rows
+world_row <- wrap_plots(world_plots, nrow = 1)
+grid_row <- wrap_plots(grid_plots, nrow = 1)
+
+# Construct final composite layout
+# Note the heights vector c(1.5, 2, 2) forcing the world and grid rows to identical height ratios
+final_dashboard <- top_metrics / world_row / grid_row + plot_layout(heights = c(3, 3, 3))
+
+# Save the final high-res output
+ggsave("timeline_intervention_dashboard10.png", plot = final_dashboard, width = 18, height = 14, dpi = 300, bg = "white")
+```
+
+```{r}
+exp_timeline
+
+data_test <- exp_timeline$data |> filter(step <= 425)
+  
+  plot_data <- data_test |> 
+    select(run_number, step, starts_with("index_")) |> 
+    # select(-index_clustering) |> # Removed as requested
+    pivot_longer(cols = starts_with("index_"), names_to = "index", values_to = "value") |> 
+    mutate(index = str_to_title(str_remove(index, "index_")))
+  
+  mean_data <- plot_data |> 
+    group_by(step, index) |> 
+    summarize(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
+  
+  ggplot() +
+    geom_line(data = plot_data, aes(x = step, y = value, group = run_number), color = "gray50", alpha = 0.05)+
+    geom_line(data = mean_data, aes(x = step, y = mean_value), color = "black", linewidth = 1) +
+    geom_vline(xintercept = c(100, 200, 300), linetype = "dashed", color = "red", alpha = 0.6) +
+    # free_y allows independent axes, but x is shared automatically across the facet
+    facet_wrap(index ~., nrow = 3, scales = "free_y") +
+    theme_minimal() +
+    labs(
+      title = "Global Segregation Indices Over Time",
+      subtitle = "Red dashed lines denote structural interventions (Ticks 100, 200, 300)",
+      x = "Tick", y = "Index Value"
+    ) +
+    theme(strip.text = element_text(face = "bold"), panel.grid.minor = element_blank())
+```
+
+
+## t-test model
+
+```{r}
+run_timeline_experiment_test <- function(model_path, repetitions = 5, max_steps = 500) {
+  
+  # Base configuration for the timeline experiment
+  constants <- list(
+  "density-percent" = 70,
+  "number-of-ethnicities" = 2,
+  "proportion-majority" = 60,
+  "neighborhood-distance" = 5,
   "venues-number" = 0,
   "venue-catchment-distance" = 7, 
   "venue-exclusivity" = 1,
@@ -2226,6 +2603,190 @@ run_timeline_experiment <- function(model_path, repetitions = 5, max_steps = 400
   
   base_metrics <- c('index-exposure', 'index-dissimilarity', 'index-clustering', 'index-concentration')
   
+  setup_file <- create_experiment(
+    name = "Timeline Intervention Scenario",
+    repetitions = repetitions,
+    run_metrics_every_step = TRUE,
+    setup = "setup",
+    go = "go",
+    time_limit = max_steps + 10, 
+    metrics = c(base_metrics),
+    constants = constants
+  )
+  
+  results <- model_path |> run_experiment(setup_file = setup_file, output = c("table"))
+  
+  # Clean outputs
+  static_params <- names(constants)[lengths(constants) == 1]
+  static_cols <- str_replace_all(static_params, "-", "_")
+  
+  data_out <- results[["table"]] |> select(-any_of(static_cols))
+  
+  return(list(data = data_out, max_steps = max_steps))
+}
+
+
+exp_timeline_test <- run_timeline_experiment_test(model_path,
+                                                  repetitions = 100, 
+                                                  max_steps = 500)
+  
+```
+
+```{r}
+plot_data_test <- exp_timeline_test$data |> 
+select(run_number, step, starts_with("index_")) |> 
+    # select(-index_clustering) |> # Removed as requested
+    pivot_longer(cols = starts_with("index_"), names_to = "index", values_to = "value") |> 
+    mutate(index = str_to_title(str_remove(index, "index_"))) |> 
+  filter(step >= 100) |> 
+  filter(step <= 450)
+  
+  mean_data_test <- plot_data_test |> 
+    group_by(step, index) |> 
+    summarize(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
+  
+  ggplot() +
+    geom_line(data = plot_data_test, aes(x = step, y = value, group = run_number), color = "gray50", alpha = 0.05)+
+    geom_line(data = mean_data_test, aes(x = step, y = mean_value), color = "black", linewidth = 1) +
+    geom_vline(xintercept = c(200, 300, 400), linetype = "dashed", color = "red", alpha = 0.6) +
+    # free_y allows independent axes, but x is shared automatically across the facet
+    facet_wrap(index ~., nrow = 3, scales = "free_y") +
+    theme_minimal() +
+    labs(
+      title = "Global Segregation Indices Over Time",
+      subtitle = "Red dashed lines denote structural interventions (Ticks 100, 200, 300)",
+      x = "Tick", y = "Index Value"
+    ) +
+    theme(strip.text = element_text(face = "bold"), panel.grid.minor = element_blank())
+
+
+causal_contrasts <- exp_timeline_test$data |>
+  filter(step %in% c(299, 350)) |>
+  select(run_number, step, starts_with("index_")) |>
+  # Lengthen to handle all segregation indices at once
+  pivot_longer(
+    cols = starts_with("index_"),
+    names_to = "metric",
+    values_to = "value"
+  ) |>
+  # Widen specifically by step to align the before/after values per run
+  pivot_wider(
+    names_from = step,
+    names_prefix = "tick_",
+    values_from = value
+  ) |>
+  mutate(
+    # The deterministic difference caused by the intervention
+    intervention_effect = tick_299 - tick_350
+  )
+
+causal_contrasts |> 
+  group_by(metric) |> 
+  summarise(tick_299 = mean(tick_299), 
+            tick_350 = mean(tick_350), 
+            intervention_effect = mean(intervention_effect))
+
+
+library(tidyverse)
+library(broom)
+
+# Assuming causal_contrasts is in your environment from the previous step
+t_test_results <- causal_contrasts |>
+  # Group the data by each segregation metric
+  nest(.by = metric) |>
+  mutate(
+    # Map a standard t-test to each group's intervention effect
+    model = map(data, ~ t.test(.x$intervention_effect, mu = 0)),
+    # Extract the statistical results into a tidy format
+    tidied = map(model, tidy)
+  ) |>
+  unnest(tidied) |>
+  # Select the most relevant columns for readability
+  select(metric, estimate, statistic, p.value, conf.low, conf.high)
+
+print(t_test_results)
+```
+
+```{r}
+causal_contrasts <- exp_timeline_test$data |>
+  filter(step %in% c(399, 450)) |>
+  select(run_number, step, starts_with("index_")) |>
+  # Lengthen to handle all segregation indices at once
+  pivot_longer(
+    cols = starts_with("index_"),
+    names_to = "metric",
+    values_to = "value"
+  ) |>
+  # Widen specifically by step to align the before/after values per run
+  pivot_wider(
+    names_from = step,
+    names_prefix = "tick_",
+    values_from = value
+  ) |>
+  mutate(
+    # The deterministic difference caused by the intervention
+    intervention_effect = tick_399 - tick_450
+  )
+
+
+library(tidyverse)
+library(broom)
+
+# Assuming causal_contrasts is in your environment from the previous step
+t_test_results <- causal_contrasts |>
+  # Group the data by each segregation metric
+  nest(.by = metric) |>
+  mutate(
+    # Map a standard t-test to each group's intervention effect
+    model = map(data, ~ t.test(.x$intervention_effect, mu = 0)),
+    # Extract the statistical results into a tidy format
+    tidied = map(model, tidy)
+  ) |>
+  unnest(tidied) |>
+  # Select the most relevant columns for readability
+  select(metric, estimate, statistic, p.value, conf.low, conf.high)
+
+print(t_test_results)
+```
+
+
+### emergent-venues
+
+```{r}
+run_timeline_experiment2 <- function(model_path, repetitions = 5, max_steps = 600) {
+  
+  # Base configuration for the timeline experiment
+  constants <- list(
+  "density-percent" = 70,
+  "number-of-ethnicities" = 2,
+  "proportion-majority" = 60,
+  "neighborhood-distance" = 5,
+  "venues-number" = 0,
+  "venue-catchment-distance" = 7, 
+  "venue-exclusivity" = 1,
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "beta5-park-group" = 0,
+  "beta6-roads-group" = 0,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "road-scenario" = "grid",
+  "road-density" = 0,
+  "road-connectiveness" = 80,
+  "parks-number" = 0, # Disabled to isolate the effect of venues
+  "intervention-scenario" = "random",
+  "dynamic-venue-mode" = "random",
+  "dynamic-venues-number" = 18,
+  "dynamic-road-mode" = "none",
+  "dynamic-road-param" = 0,
+  "intervention-scenario" = "emergent-venues", # Trigger the NetLogo logic
+  "random-seed?" = TRUE
+  )
+  
+  base_metrics <- c('index-exposure', 'index-dissimilarity', 'index-clustering', 'index-concentration')
+  
   spatial_metrics <- c(
     '[pxcor] of patches', '[pycor] of patches', '[pcolor] of patches', 
     '[grid-id] of patches', '[grid-segregation] of patches', # Required for the 3x3 visualization
@@ -2241,10 +2802,15 @@ run_timeline_experiment <- function(model_path, repetitions = 5, max_steps = 400
     go = "go",
     time_limit = max_steps + 10, 
     metrics = c(base_metrics, spatial_metrics),
+    # metrics = base_metrics,
     constants = constants
   )
   
-  results <- model_path |> run_experiment(setup_file = setup_file, output = c("table", "lists"))
+  results <- model_path |> run_experiment(
+    setup_file = setup_file, 
+    output = c("table", "lists"),
+    # output = c("table")
+    )
   
   # Clean outputs
   static_params <- names(constants)[lengths(constants) == 1]
@@ -2253,52 +2819,96 @@ run_timeline_experiment <- function(model_path, repetitions = 5, max_steps = 400
   data_out <- results[["table"]] |> select(-any_of(static_cols))
   lists_out <- results[["lists"]] |> select(-any_of(static_cols))
   
-  return(list(data = data_out, lists = lists_out, max_steps = max_steps))
+  return(list(data = data_out, 
+              lists = lists_out,
+              max_steps = max_steps))
 }
 
-# -------------------------------------------------------------------------
-# 2. VISUALIZATION FUNCTIONS
-# -------------------------------------------------------------------------
+exp_emergent_venues <- run_timeline_experiment2(model_path,
+                                                  repetitions = 5, 
+                                                  max_steps = 600)
+```
 
-plot_timeline_metrics <- function(experiment_output) {
-  data <- experiment_output$data |> filter(step <= experiment_output$max_steps)
+```{r}
+exp_emergent_venues
+
+
+interventions <- data.frame(
+    step = c(300),
+    label = c("Venues Added")
+  )
   
-  plot_data <- data |> 
+  plot_data_e <- exp_emergent_venues$data |> 
     select(run_number, step, starts_with("index_")) |> 
+    select(-index_concentration) |> 
     pivot_longer(cols = starts_with("index_"), names_to = "index", values_to = "value") |> 
     mutate(index = str_to_title(str_remove(index, "index_")))
   
-  mean_data <- plot_data |> 
+  mean_data_e <- plot_data_e |> 
+    filter(step <= interventions |> pull(step) |> max()) |>
     group_by(step, index) |> 
     summarize(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
   
+  mean_data_text <- plot_data_e |> 
+    filter(step >= interventions |> pull(step) |> max()) |>
+    group_by(step, index, 
+             # dynamic_venue_mode
+             ) |> 
+    summarize(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
+  
   ggplot() +
-    geom_line(data = plot_data, aes(x = step, y = value, group = run_number), color = "gray50", alpha = 0.05) +
-    geom_line(data = mean_data, aes(x = step, y = mean_value), color = "black", linewidth = 1) +
-    geom_vline(xintercept = c(100, 200, 300), linetype = "dashed", color = "red", alpha = 0.6) +
-    facet_wrap(~ index, nrow = 1, scales = "free_y") +
-    theme_minimal() +
-    labs(
-      title = "Global Segregation Indices Over Time",
-      subtitle = "Red dashed lines denote structural interventions (Ticks 100, 200, 300)",
-      x = "Tick", y = "Index Value"
+    geom_line(data = plot_data_e, aes(x = step, y = value, group = run_number,
+                                    # color = dynamic_venue_mode
+                                    ), alpha = 0.2) +
+    # geom_line(data = mean_data, aes(x = step, y = mean_value), color = "gray40", linewidth = 1) +
+    geomtextpath::geom_textpath(
+      data = mean_data_e,
+      aes(x = step, y = mean_value,
+          label = str_glue("Average {index} value")),
+      color = "gray30",
+      # offset = unit(25, "pt"),
+      gap = TRUE, text_smoothing = 95,
+      alpha = 1, linewidth = 1.2, linetype = "solid",
+      padding = unit(10, "pt"),
+      size = 5
     ) +
-    theme(strip.text = element_text(face = "bold"), panel.grid.minor = element_blank())
-}
+    geom_vline(data = interventions, aes(xintercept = step), linetype = "dashed", color = "cyan3", alpha = 0.7) +
+    geom_text(data = interventions, aes(x = step + 5, y = Inf, label = label), 
+              hjust = 0, vjust = 1.5, size = 5, color = "cyan3") +
+    # geomtextpath::geom_textpath(
+    #   data = mean_data_text,
+    #   aes(x = step, y = mean_value, 
+    #       # color = dynamic_venue_mode, label = dynamic_venue_mode
+    #       ),
+    #   # offset = unit(25, "pt"), 
+    #   gap = TRUE, text_smoothing = 95,
+    #   alpha = 1, linewidth = 1.2, linetype = "solid",
+    #   padding = unit(20, "pt"),
+    #   size = 5
+    # ) +
+    facet_wrap(index ~ ., nrow = 3, scales = "free_y") + 
+    labs(
+      title = "Venue-based Intervention Simulation",
+      subtitle = "Macro-level Indices Of Segregation",
+      x = NULL, y = NULL
+    )+
+    theme_segregation()
+  
+ggsave("timeline_intervention_emergent_v2.png", width = 8, height = 4, dpi = 300, bg = "white")
+```
 
-plot_segregation_world <- function(experiment_output, step_to_plot, run_to_plot = 1) {
-  
-  if (is.null(experiment_output$lists)) {
-    stop("Spatial data is missing. You must run `run_segregation_model()` with `capture_spatial = TRUE`.")
-  }
-  
-  list_data <- experiment_output$lists |> filter(step == step_to_plot, run_number == run_to_plot)
-  
-  if (nrow(list_data) == 0) {
-    stop("No data found for step ", step_to_plot, " in run ", run_to_plot)
-  }
+```{r}
+step_to_plot = 599
+run_to_plot = 2
 
-  # 1. Extract and parse patches
+list_data <- exp_emergent_venues$lists |> 
+  filter(step == step_to_plot, run_number == run_to_plot)
+  
+  temp_subtitle <- subtitles_to_add |> 
+    filter(steps_to_plot == step_to_plot) |> 
+    pull(subtitles_to_add)
+
+  # Patches
   patches <- list_data |>
     select(run_number, step, ends_with("_of_patches")) |>
     unnest(cols = ends_with("_of_patches")) |>
@@ -2307,123 +2917,58 @@ plot_segregation_world <- function(experiment_output, step_to_plot, run_to_plot 
     mutate(
       pcolor = parse_netlogo_color(as.numeric(pcolor)),
       pxcor = as.numeric(pxcor), pycor = as.numeric(pycor),
-      # is_road_ = as.logical(ifelse(is.na(is_road_), FALSE, is_road_)),
-      # is_river_ = as.logical(ifelse(is.na(is_river_), FALSE, is_river_)),
       render_color = pcolor
     )
 
-  # 2. Extract and parse families
+  # Families
   families <- list_data |>
     select(run_number, step, ends_with("_of_families")) |>
     unnest(cols = ends_with("_of_families")) |>
     rename_with(~ str_remove(.x, "_of_families")) |>
-    mutate(
-      color = parse_netlogo_color(as.numeric(color)), 
-      xcor = as.numeric(xcor), ycor = as.numeric(ycor)
-    )
+    mutate(color = parse_netlogo_color(as.numeric(color)), 
+           xcor = as.numeric(xcor), ycor = as.numeric(ycor))
 
-  # 3. Extract venues safely by checking list lengths BEFORE unnesting
+  # Venues (Safe Extraction)
   venue_cols <- names(list_data)[str_detect(names(list_data), "_of_venues$")]
-  has_venues <- FALSE
   
+  has_venues <- FALSE
   if (length(venue_cols) > 0) {
-    # Check if the first venue column actually contains data (length > 0 and not NA)
     first_venue_list <- list_data[[venue_cols[1]]][[1]]
-    
     if (length(first_venue_list) > 0 && !is.na(first_venue_list[1])) {
-      
-      venues <- list_data |> 
-        select(run_number, step, all_of(venue_cols)) |> 
-        unnest(cols = all_of(venue_cols)) |> 
-        drop_na() # Extra safety net to remove any phantom rows
-      
+      venues <- list_data |> select(run_number, step, all_of(venue_cols)) |> unnest(cols = all_of(venue_cols)) |> drop_na()
       if (nrow(venues) > 0) {
         has_venues <- TRUE
-        venues <- venues |>
-          rename_with(~ str_remove(.x, "_of_venues")) |>
-          mutate(
-            base_color = parse_netlogo_color(as.numeric(color)),
-            fill_color = colorspace::lighten(base_color, amount = 0.2),
-            xcor = as.numeric(xcor), ycor = as.numeric(ycor)
-          )
+        venues <- venues |> rename_with(~ str_remove(.x, "_of_venues")) |> mutate(
+          base_color = parse_netlogo_color(as.numeric(color)),
+          fill_color = colorspace::lighten(base_color, amount = 0.2),
+          xcor = as.numeric(xcor), ycor = as.numeric(ycor)
+        )
       }
     }
   }
-
-  # 4. Generate the baseline plot
-  p <- ggplot() +
+  
+  p1 <- ggplot() +
     geom_tile(data = patches, aes(x = pxcor, y = pycor, fill = render_color), alpha = 0.7) +
     geom_point(data = families, aes(x = xcor, y = ycor, color = color), shape = 15, size = 1.2) +
-    scale_fill_identity() + scale_color_identity() + coord_equal() +
-    theme_void() +
-    labs(subtitle = paste("World State: Step", step_to_plot)) +
-    theme(plot.subtitle = element_text(hjust = 0.5, face = "bold"))
-
-  # 5. Conditionally overlay Venues
-  if (has_venues) {
-    p <- p + geom_point(
-      data = venues, aes(x = xcor, y = ycor, fill = fill_color), 
-      shape = 24, color = "white", size = 4, stroke = 1
-    )
-  }
+    scale_fill_identity() + scale_color_identity() + coord_equal() + theme_void() +
+    labs(subtitle = paste("Model View: Tick", step_to_plot, temp_subtitle)) +
+    theme(plot.subtitle = element_text(hjust = 0.5))  
   
-  return(p)
-}
 
-plot_district_grid <- function(experiment_output, step_to_plot, run_to_plot = 1) {
-  list_data <- experiment_output$lists |> filter(step == step_to_plot, run_number == run_to_plot)
-  
-  patches <- list_data |>
-    select(run_number, step, ends_with("_of_patches")) |>
-    unnest(cols = ends_with("_of_patches")) |>
-    rename_with(~ str_remove(.x, "_of_patches")) |>
-    rename_with(~ str_replace_all(.x, "[\\?\\-]", "_")) |>
-    mutate(
-      pxcor = as.numeric(pxcor), pycor = as.numeric(pycor),
-      grid_id = as.numeric(grid_id), grid_segregation = as.numeric(grid_segregation)
-    )
-  
-  # Calculate dimensions dynamically based on NetLogo world size
-  w_width <- max(patches$pxcor) - min(patches$pxcor) + 1
-  w_height <- max(patches$pycor) - min(patches$pycor) + 1
-  
-  grid_data <- patches |>
-    group_by(grid_id) |>
-    summarize(cx = mean(pxcor), cy = mean(pycor), segregation = mean(grid_segregation, na.rm = TRUE), .groups = "drop")
-  
-  ggplot(grid_data, aes(x = cx, y = cy, fill = segregation)) +
-    geom_tile(color = "goldenrod", linewidth = 1.5, width = w_width/3, height = w_height/3) +
-    geom_text(aes(label = round(segregation, 3)), size = 4, fontface = "bold", color = "black") +
-    scale_fill_distiller(palette = "YlOrRd", direction = 1, limits = c(0, NA)) +
-    coord_equal() + theme_void() + theme(legend.position = "none") +
-    labs(subtitle = "Concentration (Local Delta)") +
-    theme(plot.subtitle = element_text(hjust = 0.5, color = "gray30"))
-}
+  p2 <- ggplot() +
+    geom_tile(data = patches, aes(x = pxcor, y = pycor, fill = render_color), alpha = 0.7) +
+    geom_point(data = families, aes(x = xcor, y = ycor, color = color), shape = 15, size = 1.2) +
+    scale_fill_identity() + scale_color_identity() + coord_equal() + theme_void() +
+    labs(subtitle = paste("Model View: Tick", step_to_plot, temp_subtitle)) +
+    theme(plot.subtitle = element_text(hjust = 0.5))+ 
+    geom_point(data = venues, aes(x = xcor, y = ycor, fill = fill_color), shape = 24, color = "white", size = 4, stroke = 1)
 
-# -------------------------------------------------------------------------
-# 3. EXECUTION AND PATCHWORK ASSEMBLY
-# -------------------------------------------------------------------------
+p2
 
-# Run the timeline experiment
-exp_timeline <- run_timeline_experiment(model_path, repetitions = 5, max_steps = 400)
+before_after <- p1 | p2
 
-# Build the layout components
-target_run <- 1 # Select a specific run to visualize spatially
-steps_to_plot <- c(101, 125, 225, 350)
+before_after
 
-top_metrics <- plot_timeline_metrics(exp_timeline)
-
-world_plots <- map(steps_to_plot, ~ plot_segregation_world(exp_timeline, step_to_plot = .x, run_to_plot = target_run))
-grid_plots <- map(steps_to_plot, ~ plot_district_grid(exp_timeline, step_to_plot = .x, run_to_plot = target_run))
-
-# Assemble rows
-world_row <- wrap_plots(world_plots, nrow = 1)
-grid_row <- wrap_plots(grid_plots, nrow = 1)
-
-# Construct final composite layout
-final_dashboard <- top_metrics / world_row / grid_row + plot_layout(heights = c(1.5, 2, 1.2))
-
-# Save output
-ggsave("timeline_intervention_dashboard.png", plot = final_dashboard, width = 16, height = 10, dpi = 300, bg = "white")
+ggsave(before_after,filename =  "timeline_intervention_emergent_vworld2.png", width = 8, height = 4, dpi = 300, bg = "white")
 ```
 

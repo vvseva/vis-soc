@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <model version="NetLogo 7.0.4" snapToGrid="true">
-  <code><![CDATA[extensions [gis]
+  <code><![CDATA[extensions [gis nw dbscan]
+
+undirected-link-breed [ cluster-links cluster-link ]
 
 breed [families family]
 breed [venues venue]
@@ -89,7 +91,7 @@ to setup
 
   set temp-venue nobody
   set colors [red green yellow blue orange]
-  ifelse random-seed? [ random-seed 42 ] [ random-seed new-seed ]
+  ifelse random-seed? [ random-seed new-seed ] [ random-seed behaviorspace-run-number ]
 
   set environment-changed? false
   set last-travel-distance travel-distance
@@ -146,6 +148,19 @@ to go
   ;; 3. Apply Chronological Timeline Interventions (Ticks 100, 200, 300)
   if intervention-scenario = "timeline-experiment" [
     apply-timeline-interventions
+  ]
+  
+  if intervention-scenario = "emergent-venues" [
+    if ticks = 300 [
+      ;; Parameters: [ minimum-families-to-form-a-cluster , spatial-distance-threshold ]
+      ;; E.g., Requires at least 10 families within a catchment distance of 5
+      generate-emergent-venues 50
+      
+      set environment-changed? true
+    ]
+    if ticks >= 305 [
+    set beta1-neighbors 0
+    ]
   ]
   
   ;; 4. Update the world map and caches if the topology changed
@@ -239,7 +254,7 @@ end
 
 to apply-timeline-interventions
   ;; TICK 100: Add 1 Green Venue near the center
-  if ticks = 100 [
+  if ticks = 400 [
     let target min-one-of habitable-patches [distance patch 0 0]
     if target != nobody [
       set first-venue-patch target
@@ -249,7 +264,7 @@ to apply-timeline-interventions
   ]
   
   ;; TICK 200: Add 1 Red Venue near the first venue
-  if ticks = 200 [
+  if ticks = 500 [
     if first-venue-patch != nobody [
       ;; Find a habitable spot near the first venue that isn't the exact same patch
       let target one-of [neighbors] of first-venue-patch
@@ -261,27 +276,83 @@ to apply-timeline-interventions
   ]
   
   ;; TICK 300: Distribute 16 remaining venues (1 red, 1 green) across the 8 empty districts
-  if ticks = 300 [
+  if ticks = 600 [
+    
+    ifelse (dynamic-venue-mode = "integrated") [
+    
+    
     let initial-grid -1
     if first-venue-patch != nobody [ set initial-grid [grid-id] of first-venue-patch ]
     
     let g 0
-    while [g < 9] [
-      ;; Skip the district where we already placed the first two venues
+    while [g < 9] [  ;; Corrected to < 9 to ensure grid 8 is processed
+                     ;; Skip the district where we already placed the first two venues
       if g != initial-grid [
-        let g-patches patches with [grid-id = g and is-habitable? and not any? venues-here]
         
-        ;; Ensure there's enough room to place a pair of venues
-        if count g-patches >= 2 [
-          let p1 one-of g-patches
+        ;; 1. Identify all patches in this grid to find its exact center
+        let g-patches patches with [grid-id = g]
+        let cx floor (mean [pxcor] of g-patches)
+        let cy floor (mean [pycor] of g-patches)
+        let center-p patch cx cy
+        
+        ;; 2. Filter for habitable spots that are currently empty
+        let available-spots g-patches with [is-habitable? and not any? venues-here]
+        
+        ;; 3. Ensure there is enough room to place a pair of venues
+        if count available-spots >= 2 [
+          
+          ;; 1st Venue: Place exactly at or closest to the grid's center
+          let p1 min-one-of available-spots [distance center-p]
           create-venue-at p1 (item 0 colors) 
           
-          let p2 one-of g-patches with [self != p1]
+          ;; Remove the newly occupied patch from the available list
+          set available-spots available-spots with [self != p1]
+          
+          ;; 2nd Venue: Place approximately 2 patches away from the center
+          let p2 min-one-of available-spots [ abs (distance center-p - 2) ]
           create-venue-at p2 (item 1 colors) 
         ]
       ]
       set g g + 1
     ]
+    ] [
+        let venues-created 0
+    let active-colors sublist colors 0 number-of-ethnicities
+    
+    while [venues-created < dynamic-venues-number] [
+      ;; Must dynamically check habitable patches that don't already have venues
+      let available-spots patches with [not is-road? and not is-river? and not any? venues-here]
+      if not any? available-spots [ stop ]
+      
+      let target-patch one-of available-spots
+      let c1 item (random length active-colors) active-colors
+      
+      create-venue-at target-patch c1
+      set venues-created venues-created + 1
+      
+      if dynamic-venue-mode = "integrated" and venues-created < dynamic-venues-number [
+        let available-colors-for-pair remove c1 active-colors
+        let c2 c1 
+        if not empty? available-colors-for-pair [
+          set c2 item (random length available-colors-for-pair) available-colors-for-pair
+        ]
+        
+        set available-spots patches with [not is-road? and not is-river? and not any? venues-here]
+        if any? available-spots [
+          let neighbor min-one-of available-spots [distance target-patch]
+          if neighbor != nobody [
+            create-venue-at neighbor c2
+            set venues-created venues-created + 1
+          ]
+        ]
+      ]
+    ]
+    
+    
+    ]
+    ; apply-dynamic-interventions
+    
+      
     set environment-changed? true
   ]
 end
@@ -450,7 +521,7 @@ to initialize-tract-habitable-counts
 end
 
 to apply-intervention-scenario
-  if intervention-scenario = "dynamic-tick-150" [ stop ]
+  if intervention-scenario = "dynamic-tick-150" or intervention-scenario = "timeline-experiment" [ stop ]
   
   ask venues [ die ]
   
@@ -764,7 +835,7 @@ to calculate-segregation-dimensions
   ]
   set index-concentration (delta-sum / 2)
   
-  let n_random 150  
+  let n_random 15000  
   let sample-x n-of (ifelse-value (pop-x > n_random) [n_random] [pop-x]) families with [color = gx-color]
   let sample-y n-of (ifelse-value (pop-y > n_random) [n_random] [pop-y]) families with [color != gx-color]
   let sample-t n-of (ifelse-value (pop-t > n_random) [n_random] [pop-t]) families
@@ -909,6 +980,87 @@ to grow-parks
     set environment-changed? true
     display
   ]
+end
+
+to generate-emergent-venues [ capacity-per-venue ]
+  let active-colors sublist colors 0 number-of-ethnicities
+  
+  foreach active-colors [ current-color ->
+    let target-families families with [color = current-color]
+    
+    if any? target-families [
+      ;; 1. Dynamically calculate K based on population mass
+      let k ceiling (count target-families / capacity-per-venue)
+      
+      ;; 2. Partition the continuous mass into K zones and place venues
+      partition-and-place-venues target-families current-color k
+    ]
+  ]
+end
+
+to partition-and-place-venues [ target-families target-color k ]
+  ;; 1. Initialize silent tracker agents to avoid premature stamping
+  let active-trackers turtle-set nobody
+  
+  let initial-seeds n-of k target-families
+  
+  ask initial-seeds [
+    ask patch-here [
+      sprout 1 [
+        set hidden? true
+        ;; Add the newly sprouted tracker to our running agentset
+        set active-trackers (turtle-set active-trackers self)
+      ]
+    ]
+  ]
+  
+  ;; 2. Voronoi Relaxation (Lloyd's Algorithm)
+  repeat 5 [
+    
+    ;; Step A: Assign every family to their nearest tracker
+    ask target-families [
+      let my-nearest min-one-of active-trackers [distance myself]
+      ;; Temporarily store the ID of the nearest tracker to create the Voronoi cell
+      set grid-id [who] of my-nearest 
+    ]
+    
+    ;; Step B: Move the tracker to the medoid of its newly assigned cell
+    ask active-trackers [
+      let my-cell target-families with [grid-id = [who] of myself]
+      
+      if any? my-cell [
+        let new-medoid find-cluster-medoid my-cell
+        if new-medoid != nobody [
+          move-to new-medoid
+        ]
+      ]
+    ]
+  ]
+  
+  ;; 3. Finalize Placement: Spawns the actual venue (stamping exactly once)
+  ask active-trackers [
+    create-venue-at patch-here target-color
+    die
+  ]
+end
+
+to-report find-cluster-medoid [ cluster-set ]
+  if count cluster-set = 1 [ report min-one-of cluster-set [who] ]
+  
+  let best-medoid nobody
+  let min-total-distance 999999
+  
+  ask cluster-set [
+    let candidate self
+    let total-distance sum [distance candidate] of cluster-set
+    
+    if total-distance < min-total-distance [
+      set min-total-distance total-distance
+      set best-medoid candidate
+    ]
+  ]
+  
+  report best-medoid
 end]]></code>
   <widgets>
     <view x="295" wrappingAllowedX="false" y="10" frameRate="30.0" minPycor="-25" height="404" showTickCounter="true" patchSize="8.0" fontSize="10" wrappingAllowedY="false" width="404" tickCounterLabel="ticks" maxPycor="25" updateMode="1" maxPxcor="25" minPxcor="-25"></view>
@@ -935,7 +1087,7 @@ end]]></code>
     <slider x="15" step="1" y="176" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
     <slider x="815" step="1" y="15" max="20" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="0.0" variable="venues-number"></slider>
     <slider x="815" step="1" y="103" max="20" width="173" display="venue-catchment-distance" height="50" min="0" direction="Horizontal" default="10.0" variable="venue-catchment-distance"></slider>
-    <slider x="815" step="0.1" y="178" max="1" width="222" display="venue-exclusivity" height="50" min="0.0" direction="Horizontal" default="1.0" variable="venue-exclusivity"></slider>
+    <slider x="815" step="0.1" y="178" max="1" width="222" display="venue-exclusivity" height="50" min="0.0" direction="Horizontal" default="0.7" variable="venue-exclusivity"></slider>
     <chooser x="815" y="316" height="60" variable="new-venue-color" current="0" width="157" display="new-venue-color">
       <choice type="double" value="15.0"></choice>
       <choice type="double" value="55.0"></choice>
@@ -988,16 +1140,16 @@ plotxy utility-threshold plot-y-max</update>
         <update>plot index-concentration</update>
       </pen>
     </plot>
-    <switch x="295" y="450" height="40" on="false" variable="random-seed?" width="110" display="random-seed?"></switch>
+    <switch x="295" y="450" height="40" on="true" variable="random-seed?" width="110" display="random-seed?"></switch>
     <slider x="1135" step="0.1" y="235" max="1" width="210" display="beta3-venue-loc" height="50" min="0" direction="Horizontal" default="0.0" variable="beta3-venue-loc"></slider>
     <slider x="1135" step="0.1" y="290" max="1" width="210" display="beta4-home-venues" height="50" min="0" direction="Horizontal" default="0.0" variable="beta4-home-venues"></slider>
     <slider x="1135" step="0.1" y="345" max="1" width="210" display="beta5-park-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta5-park-group"></slider>
-    <slider x="1135" step="0.1" y="125" max="1" width="210" display="beta1-neighbors" height="50" min="0" direction="Horizontal" default="0.5" variable="beta1-neighbors"></slider>
+    <slider x="1135" step="0.1" y="125" max="1" width="210" display="beta1-neighbors" height="50" min="0" direction="Horizontal" default="0.0" variable="beta1-neighbors"></slider>
     <slider x="1135" step="0.1" y="30" max="1" width="182" display="utility-threshold" height="50" min="0" direction="Horizontal" default="0.1" variable="utility-threshold"></slider>
     <slider x="1135" step="0.1" y="400" max="1" width="210" display="beta6-roads-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta6-roads-group"></slider>
-    <slider x="15" step="1" y="230" max="100" width="250" display="proportion-majority" height="50" min="0" direction="Horizontal" default="59.0" variable="proportion-majority" units="%"></slider>
+    <slider x="15" step="1" y="230" max="100" width="250" display="proportion-majority" height="50" min="0" direction="Horizontal" default="60.0" variable="proportion-majority" units="%"></slider>
     <button x="1360" y="220" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="145">toggle-segregation-grid</button>
-    <slider x="295" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="3.0" variable="neighborhood-distance"></slider>
+    <slider x="295" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="5.0" variable="neighborhood-distance"></slider>
     <slider x="10" step="1" y="605" max="5" width="250" display="number-of-ethnicities" height="50" min="2" direction="Horizontal" default="2.0" variable="number-of-ethnicities"></slider>
     <switch x="15" y="670" height="40" on="false" variable="real-travel?" width="90" display="real-travel?"></switch>
     <slider x="115" step="1" y="670" max="20" width="250" display="travel-distance" height="50" min="0" direction="Horizontal" default="5.0" variable="travel-distance"></slider>
@@ -1012,11 +1164,12 @@ plotxy utility-threshold plot-y-max</update>
       <choice type="string" value="city-center-suburbia"></choice>
       <choice type="string" value="connected-communities"></choice>
     </chooser>
-    <chooser x="375" y="735" height="60" variable="intervention-scenario" current="3" width="250" display="intervention-scenario">
+    <chooser x="375" y="735" height="60" variable="intervention-scenario" current="4" width="250" display="intervention-scenario">
       <choice type="string" value="random"></choice>
       <choice type="string" value="structured"></choice>
       <choice type="string" value="dynamic-tick-150"></choice>
       <choice type="string" value="timeline-experiment"></choice>
+      <choice type="string" value="emergent-venues"></choice>
       <choice type="string" value="none"></choice>
       <choice type="string" value="central-park"></choice>
       <choice type="string" value="venue-hubs"></choice>
@@ -1028,14 +1181,14 @@ plotxy utility-threshold plot-y-max</update>
     <slider x="810" step="1" y="580" max="10" width="250" display="parks-number" height="50" min="0" direction="Horizontal" default="0.0" variable="parks-number"></slider>
     <slider x="810" step="1" y="640" max="20" width="255" display="park-catchment-distance" height="50" min="0" direction="Horizontal" default="2.0" variable="park-catchment-distance"></slider>
     <slider x="630" step="1" y="695" max="100" width="250" display="road-density" height="50" min="0" direction="Horizontal" default="0.0" variable="road-density"></slider>
-    <slider x="885" step="1" y="695" max="100" width="250" display="road-connectiveness" height="50" min="0" direction="Horizontal" default="80.0" variable="road-connectiveness"></slider>
-    <slider x="630" step="1" y="750" max="100" width="250" display="proportion-of-integration" height="50" min="0" direction="Horizontal" default="50.0" variable="proportion-of-integration"></slider>
-    <chooser x="375" y="805" height="60" variable="dynamic-venue-mode" current="0" width="250" display="dynamic-venue-mode">
+    <slider x="885" step="1" y="695" max="100" width="250" display="road-connectiveness" height="50" min="0" direction="Horizontal" default="0.0" variable="road-connectiveness"></slider>
+    <slider x="630" step="1" y="750" max="100" width="250" display="proportion-of-integration" height="50" min="0" direction="Horizontal" default="100.0" variable="proportion-of-integration"></slider>
+    <chooser x="375" y="805" height="60" variable="dynamic-venue-mode" current="2" width="250" display="dynamic-venue-mode">
       <choice type="string" value="none"></choice>
       <choice type="string" value="random"></choice>
       <choice type="string" value="integrated"></choice>
     </chooser>
-    <slider x="630" step="1" y="815" max="20" width="250" display="dynamic-venues-number" height="50" min="0" direction="Horizontal" default="9.0" variable="dynamic-venues-number"></slider>
+    <slider x="630" step="1" y="815" max="20" width="250" display="dynamic-venues-number" height="50" min="0" direction="Horizontal" default="18.0" variable="dynamic-venues-number"></slider>
     <chooser x="375" y="870" height="60" variable="dynamic-road-mode" current="2" width="250" display="dynamic-road-mode">
       <choice type="string" value="none"></choice>
       <choice type="string" value="build-grid"></choice>
