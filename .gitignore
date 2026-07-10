@@ -1,5 +1,8 @@
 .Rproj.user
 .Rhistory
 .RData
+.RDataTmp*
 .Ruserdata
 .positai
+netlogo/exp_timeline.RDS
+netlogo/exp_timeline2.RDS
