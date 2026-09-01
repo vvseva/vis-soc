@@ -1,0 +1,147 @@
+---
+title: "Peter vis"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(tibble)
+library(dplyr)
+
+# 1. Define the Nodes
+nodes <- tribble(
+  ~node_id,      ~time_layer, ~type,   ~label,                      ~x,  ~y,
+  "mac_start_1", 1990,        "Macro", "Analog Market Norms",       0,   10,
+  "mic_start_1", 1990,        "Micro", "Traditional Retailer",      0,   0,
+  "mic_end_1",   1990,        "Micro", "Launch Basic Website",      10,  0,
+  "mac_end_1",   1990,        "Macro", "Early Web Infrastructure",  10,  10,
+  "mac_start_2", 2000,        "Macro", "Early Web Infrastructure",  0,   10,
+  "mic_start_2", 2000,        "Micro", "Brick-and-Click Firm",      0,   0,
+  "mic_end_2",   2000,        "Micro", "Invest in Supply Chain",    10,  0,
+  "mac_end_2",   2000,        "Macro", "Rise of Global E-commerce", 10,  10
+)
+
+# 2. Define the Edges
+edges <- tribble(
+  ~source,       ~target,       ~edge_type, 
+  "mac_start_1", "mic_start_1", "Causal",
+  "mic_start_1", "mic_end_1",   "Causal",
+  "mic_end_1",   "mac_end_1",   "Causal",
+  "mac_start_1", "mic_end_1",   "Causal",
+  "mic_end_1",   "mic_start_2", "Temporal", # The dashed path between layers
+  "mac_end_1",   "mac_start_2", "Temporal"
+)
+
+# 3. Join them to create a plottable dataframe
+visualization_data <- edges |>
+  left_join(nodes, by = join_by(source == node_id)) |>
+  rename(source_x = x, source_y = y, source_z = time_layer) |>
+  left_join(nodes, by = join_by(target == node_id)) |>
+  rename(target_x = x, target_y = y, target_z = time_layer)
+```
+
+```{r}
+# Load necessary tidyverse and visualization libraries
+library(tibble)
+library(dplyr)
+library(tidyr)
+library(plotly)
+
+# 1. Define the Nodes
+nodes <- tribble(
+  ~node_id,      ~time_layer, ~type,   ~label,                      ~x,  ~y,
+  "mac_start_1", 1990,        "Macro", "Analog Market Norms",       0,   10,
+  "mic_start_1", 1990,        "Micro", "Traditional Retailer",      0,   0,
+  "mic_end_1",   1990,        "Micro", "Launch Basic Website",      10,  0,
+  "mac_end_1",   1990,        "Macro", "Early Web Infrastructure",  10,  10,
+  "mac_start_2", 2000,        "Macro", "Early Web Infrastructure",  0,   10,
+  "mic_start_2", 2000,        "Micro", "Brick-and-Click Firm",      0,   0,
+  "mic_end_2",   2000,        "Micro", "Invest in Supply Chain",    10,  0,
+  "mac_end_2",   2000,        "Macro", "Rise of Global E-commerce", 10,  10
+)
+
+# 2. Define the Edges
+edges <- tribble(
+  ~source,       ~target,       ~edge_type, 
+  "mac_start_1", "mic_start_1", "Causal",
+  "mic_start_1", "mic_end_1",   "Causal",
+  "mic_end_1",   "mac_end_1",   "Causal",
+  "mac_start_1", "mic_end_1",   "Causal",
+  "mic_end_1",   "mic_start_2", "Temporal", 
+  "mac_end_1",   "mac_start_2", "Temporal"
+)
+
+# 3. Reshape Edges for Plotly (Long Format)
+# We add a unique edge_id, then pivot so each edge has a 'source' row and 'target' row.
+edges_long <- edges |>
+  mutate(edge_id = row_number()) |>
+  pivot_longer(
+    cols = c(source, target), 
+    names_to = "node_role", 
+    values_to = "node_id"
+  ) |>
+  # Join back to our nodes to fetch the X, Y, Z coordinates for each point
+  left_join(nodes, by = "node_id")
+
+# 4. Render the 3D Visualization
+fig <- plot_ly() |>
+  
+  # Layer A: Causal edges (Solid lines within the same time layer)
+  add_trace(
+    data = edges_long |> filter(edge_type == "Causal"),
+    x = ~x, y = ~y, z = ~time_layer,
+    split = ~edge_id,
+    type = "scatter3d",
+    mode = "lines",
+    line = list(color = "#1f77b4", width = 5),
+    name = "Causal Mechanism",
+    showlegend = TRUE
+  ) |>
+  
+  # Layer B: Temporal edges (Dashed lines connecting time layers)
+  add_trace(
+    data = edges_long |> filter(edge_type == "Temporal"),
+    x = ~x, y = ~y, z = ~time_layer,
+    split = ~edge_id,
+    type = "scatter3d",
+    mode = "lines",
+    line = list(color = "#ff7f0e", width = 5, dash = "dash"),
+    name = "Temporal Evolution",
+    showlegend = TRUE
+  ) |>
+  
+  # Layer C: The Nodes (Points marking the actors and states)
+  add_trace(
+    data = nodes,
+    x = ~x, y = ~y, z = ~time_layer,
+    type = "scatter3d",
+    mode = "markers+text",
+    marker = list(size = 6, color = "#2ca02c", symbol = "circle"),
+    text = ~label,
+    textposition = "top center",
+    textfont = list(size = 10, color = "#333"),
+    name = "Entities",
+    hoverinfo = "text"
+  ) |>
+  
+  # 5. Clean up the aesthetic environment
+  layout(
+    title = list(
+      text = "Macro-Micro-Macro Transitions over Time",
+      y = 0.95
+    ),
+    scene = list(
+      xaxis = list(title = "Micro/Macro Focus", showgrid = FALSE, zeroline = FALSE),
+      yaxis = list(title = "Progression", showgrid = FALSE, zeroline = FALSE),
+      zaxis = list(title = "Time Layer (Years)", tickvals = c(1990, 2000)),
+      camera = list(
+        eye = list(x = -1.5, y = -1.5, z = 1.2) # Sets a comfortable isometric viewing angle
+      )
+    ),
+    # Remove duplicate legend entries caused by the split parameter
+    showlegend = FALSE 
+  )
+
+# Display the interactive plot
+fig
+```
