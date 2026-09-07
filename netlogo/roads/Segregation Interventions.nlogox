@@ -4,6 +4,9 @@
 
 undirected-link-breed [ cluster-links cluster-link ]
 
+undirected-link-breed [ venue-links venue-link ]
+undirected-link-breed [ family-links family-link ]
+
 breed [families family]
 breed [venues venue]
 breed [parks park]
@@ -73,6 +76,10 @@ families-own [
   visited-venues
   visited-parks       
   visited-roads
+  
+  home-pxcor
+  home-pycor
+  saved-size
 ]
 
 venues-own [
@@ -483,6 +490,10 @@ to setup-families
         set visited-venues (turtle-set nobody)
         set visited-parks (turtle-set nobody)
         set visited-roads (patch-set nobody)
+        
+        set home-pxcor pxcor
+        set home-pycor pycor
+        set saved-size 1.0
       ]
     ]
   ]
@@ -593,7 +604,7 @@ to create-venue-at [ target-p v-color ]
       set shape "house"
       set color yellow
       set size 3
-      stamp
+      ;stamp
       set color v-color
       set size 2
       set my-venue-exclusivity venue-exclusivity
@@ -739,6 +750,9 @@ to find-new-spot
     ]
     
     move-to target
+    
+    set home-pxcor xcor
+    set home-pycor ycor
 
     let p patch-here
     set visited-roads [cached-reachable-roads] of p
@@ -1071,6 +1085,201 @@ to-report find-cluster-medoid [ cluster-set ]
   ]
   
   report best-medoid
+end
+
+
+to prepare-network-layout
+  clear-links
+  ask families [
+    set saved-size size
+    set size 0.45
+  ]
+end
+
+to recenter-network [ node-set margin ]
+  let min-x min [xcor] of node-set
+  let max-x max [xcor] of node-set
+  let min-y min [ycor] of node-set
+  let max-y max [ycor] of node-set
+  
+  let span-x (max-x - min-x)
+  let span-y (max-y - min-y)
+  
+  if span-x > 0 and span-y > 0 [
+    let target-span (2 * max-pxcor - (2 * margin))
+    let scale-factor min (list (target-span / span-x) (target-span / span-y) 1.0)
+    let mid-x (min-x + max-x) / 2
+    let mid-y (min-y + max-y) / 2
+    
+    ask node-set [
+      setxy ((xcor - mid-x) * scale-factor) ((ycor - mid-y) * scale-factor)
+    ]
+  ]
+end
+
+to setup-family-link [ fam1 fam2 ]
+  if not [ link-neighbor? fam2 ] of fam1 [
+    ask fam1 [
+      create-family-link-with fam2 [
+        ifelse [ color ] of end1 = [ color ] of end2 [
+          ;; Same group: match ethnicity color (slightly darkened for visibility)
+          set color [ color ] of end1 - 1
+        ] [
+          ;; Cross-group tie: neutral subtle gray
+          set color gray + 2
+        ]
+      ]
+    ]
+  ]
+end
+
+;; --- 1. VENUE NETWORK VISUALIZATION ---
+to visualize-venue-network
+  prepare-network-layout
+  
+  ;; 1. Identify families that actually visit at least one venue
+  let active-families families with [ visited-venues != nobody and any? visited-venues ]
+  let active-venues venues with [ any? my-attendees ]
+  
+  if not any? active-families or not any? active-venues [
+    user-message "No families are currently attending any venues."
+    stop
+  ]
+  
+  ;; Hide non-participating families so they don't distort the layout
+  ask families with [ not member? self active-families ] [
+    set hidden? true
+  ]
+  
+  ;; --- STAGE 1: Bipartite Network (Families <-> Venues) ---
+  ask active-venues [ set hidden? false ]
+  
+  ask active-families [
+    let my-fam self
+    ask visited-venues [
+      create-venue-link-with my-fam [
+        set color [ color ] of my-fam - 2
+      ]
+    ]
+  ]
+  
+  ;; Layout only the participating entities
+  repeat 40 [
+    layout-spring (turtle-set active-families active-venues) venue-links 0.2 2.0 0.8
+    display
+  ]
+  
+  wait 1.0  ;; Pause so you can clearly see who connects to which venue
+  
+  ;; --- STAGE 2: One-Mode Projection (Families <-> Families) ---
+  ask active-venues [
+    let attendees my-attendees with [ is-family? self ]
+    if count attendees > 1 [
+      ask attendees [
+        let other-attendees attendees with [ who > [ who ] of myself ]
+        let source-fam self
+        ask other-attendees [
+          setup-family-link source-fam self
+        ]
+      ]
+    ]
+  ]
+  
+  ;; Remove bipartite links and hide venue turtles
+  ask venue-links [ die ]
+  ask active-venues [ set hidden? true ]
+  
+  ;; Relax the projected co-attendance network
+  repeat 50 [
+    layout-spring active-families family-links 0.15 1.5 0.6
+    display
+  ]
+  
+  recenter-network active-families 4
+  display
+end
+
+;; --- 2. NEIGHBORHOOD NETWORK VISUALIZATION ---
+to visualize-neighborhood-network
+  prepare-network-layout
+  let check-los? any? patches with [ is-river? ]
+  
+  ask families [
+    let my-fam self
+    let visible-neighbors other families in-radius neighborhood-distance
+    if check-los? [
+      set visible-neighbors visible-neighbors with [ has-line-of-sight? myself ]
+    ]
+    
+    let target-group visible-neighbors with [ who > [ who ] of my-fam ]
+    ask target-group [
+      setup-family-link my-fam self
+    ]
+  ]
+  
+  repeat 40 [
+    layout-spring families family-links 0.2 1.2 0.5
+    display
+  ]
+  
+  recenter-network families 3
+  display
+end
+
+;; --- 3. ROAD NETWORK CO-PRESENCE VISUALIZATION ---
+to visualize-road-network
+  prepare-network-layout
+  
+  ;; 1. Identify participating commuters and hide isolates
+  let active-commuters families with [ visited-roads != nobody and any? visited-roads ]
+  
+  if not any? active-commuters [
+    user-message "No families currently commute along roads."
+    stop
+  ]
+  
+  ask families with [ not member? self active-commuters ] [
+    set hidden? true
+  ]
+
+  ;; 2. Fast link creation: sample representative road segments and peers
+  ;; Evaluating key nodes instead of every single tile avoids O(tiles * riders^2) checks
+  let busy-roads patches with [ is-road? and count my-commuters > 1 and (pxcor mod 2 = 0 or pycor mod 2 = 0) ]
+  
+  no-display
+  ask busy-roads [
+    let riders my-commuters with [ is-family? self ]
+    ask riders [
+      let my-id who
+      let peers riders with [ who > my-id ]
+      ;; Cap maximum links per patch to prevent massive, unreadable hairballs
+      let target-peers ifelse-value (count peers > 4) [ n-of 4 peers ] [ peers ]
+      let source-rider self
+      ask target-peers [
+        setup-family-link source-rider self
+      ]
+    ]
+  ]
+
+  ;; 3. Run spring physics in batches without redrawing every single micro-step
+  repeat 50 [
+    layout-spring active-commuters family-links 0.18 1.5 0.6
+  ]
+  
+  recenter-network active-commuters 4
+  display
+end
+
+;; --- 4. RESTORE GRID VISUALIZATION ---
+to restore-grid-view
+  clear-links
+  ask venues [ set hidden? false ]
+  ask families [
+    set hidden? false
+    setxy home-pxcor home-pycor
+    set size (ifelse-value (saved-size != 0) [ saved-size ] [ 1.0 ])
+  ]
+  display
 end]]></code>
   <widgets>
     <view x="295" wrappingAllowedX="false" y="10" frameRate="30.0" minPycor="-25" height="404" showTickCounter="true" patchSize="8.0" fontSize="10" wrappingAllowedY="false" width="404" tickCounterLabel="ticks" maxPycor="25" updateMode="1" maxPxcor="25" minPxcor="-25"></view>
@@ -1095,7 +1304,7 @@ end]]></code>
     <button x="34" y="14" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="80" display="setup">setup</button>
     <button x="124" y="14" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="80" display="go">go</button>
     <slider x="15" step="1" y="176" max="100" width="225" display="%-different-wanted" height="50" min="0" direction="Horizontal" default="0.0" variable="%-different-wanted" units="%"></slider>
-    <slider x="815" step="1" y="15" max="20" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="0.0" variable="venues-number"></slider>
+    <slider x="815" step="1" y="15" max="20" width="173" display="venues-number" height="50" min="0" direction="Horizontal" default="14.0" variable="venues-number"></slider>
     <slider x="815" step="1" y="103" max="20" width="173" display="venue-catchment-distance" height="50" min="0" direction="Horizontal" default="10.0" variable="venue-catchment-distance"></slider>
     <slider x="815" step="0.1" y="178" max="1" width="222" display="venue-exclusivity" height="50" min="0.0" direction="Horizontal" default="0.7" variable="venue-exclusivity"></slider>
     <chooser x="815" y="316" height="60" variable="new-venue-color" current="0" width="157" display="new-venue-color">
@@ -1107,7 +1316,7 @@ end]]></code>
     </chooser>
     <button x="815" y="471" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="217">place-temporary-venue</button>
     <button x="810" y="528" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="237">confirm-venue-placement</button>
-    <slider x="1135" step="0.1" y="179" max="1" width="212" display="beta2-venue-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta2-venue-group"></slider>
+    <slider x="1135" step="0.1" y="179" max="1" width="212" display="beta2-venue-group" height="50" min="0" direction="Horizontal" default="0.0" variable="beta2-venue-group"></slider>
     <plot x="1100" autoPlotX="true" yMax="10.0" autoPlotY="true" y="480" xMin="0.0" height="175" legend="false" xMax="1.0" yMin="0.0" width="230" display="utility">
       <setup></setup>
       <update></update>
@@ -1154,7 +1363,7 @@ plotxy utility-threshold plot-y-max</update>
     <slider x="1135" step="0.1" y="235" max="1" width="210" display="beta3-venue-loc" height="50" min="0" direction="Horizontal" default="0.0" variable="beta3-venue-loc"></slider>
     <slider x="1135" step="0.1" y="290" max="1" width="210" display="beta4-home-venues" height="50" min="0" direction="Horizontal" default="0.0" variable="beta4-home-venues"></slider>
     <slider x="1135" step="0.1" y="345" max="1" width="210" display="beta5-park-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta5-park-group"></slider>
-    <slider x="1135" step="0.1" y="125" max="1" width="210" display="beta1-neighbors" height="50" min="0" direction="Horizontal" default="0.0" variable="beta1-neighbors"></slider>
+    <slider x="1135" step="0.1" y="125" max="1" width="210" display="beta1-neighbors" height="50" min="0" direction="Horizontal" default="0.5" variable="beta1-neighbors"></slider>
     <slider x="1135" step="0.1" y="30" max="1" width="182" display="utility-threshold" height="50" min="0" direction="Horizontal" default="0.1" variable="utility-threshold"></slider>
     <slider x="1135" step="0.1" y="400" max="1" width="210" display="beta6-roads-group" height="50" min="0" direction="Horizontal" default="0.5" variable="beta6-roads-group"></slider>
     <slider x="15" step="1" y="230" max="100" width="250" display="proportion-majority" height="50" min="0" direction="Horizontal" default="60.0" variable="proportion-majority" units="%"></slider>
@@ -1162,9 +1371,9 @@ plotxy utility-threshold plot-y-max</update>
     <slider x="295" step="1" y="605" max="20" width="173" display="neighborhood-distance" height="50" min="1" direction="Horizontal" default="3.0" variable="neighborhood-distance"></slider>
     <slider x="10" step="1" y="605" max="5" width="250" display="number-of-ethnicities" height="50" min="2" direction="Horizontal" default="2.0" variable="number-of-ethnicities"></slider>
     <switch x="15" y="670" height="40" on="false" variable="real-travel?" width="90" display="real-travel?"></switch>
-    <slider x="115" step="1" y="670" max="20" width="250" display="travel-distance" height="50" min="0" direction="Horizontal" default="1.0" variable="travel-distance"></slider>
+    <slider x="115" step="1" y="670" max="20" width="250" display="travel-distance" height="50" min="0" direction="Horizontal" default="4.0" variable="travel-distance"></slider>
     <slider x="115" step="1" y="725" max="10" width="250" display="road-multiplier" height="50" min="0" direction="Horizontal" default="1.0" variable="road-multiplier"></slider>
-    <chooser x="375" y="670" height="60" variable="road-scenario" current="1" width="250" display="road-scenario">
+    <chooser x="375" y="670" height="60" variable="road-scenario" current="2" width="250" display="road-scenario">
       <choice type="string" value="real-norrkoping"></choice>
       <choice type="string" value="empty"></choice>
       <choice type="string" value="grid"></choice>
@@ -1190,9 +1399,9 @@ plotxy utility-threshold plot-y-max</update>
     </chooser>
     <slider x="810" step="1" y="580" max="10" width="250" display="parks-number" height="50" min="0" direction="Horizontal" default="0.0" variable="parks-number"></slider>
     <slider x="810" step="1" y="640" max="20" width="255" display="park-catchment-distance" height="50" min="0" direction="Horizontal" default="2.0" variable="park-catchment-distance"></slider>
-    <slider x="630" step="1" y="695" max="100" width="250" display="road-density" height="50" min="0" direction="Horizontal" default="0.0" variable="road-density"></slider>
-    <slider x="885" step="1" y="695" max="100" width="250" display="road-connectiveness" height="50" min="0" direction="Horizontal" default="0.0" variable="road-connectiveness"></slider>
-    <slider x="630" step="1" y="750" max="100" width="250" display="proportion-of-integration" height="50" min="0" direction="Horizontal" default="100.0" variable="proportion-of-integration"></slider>
+    <slider x="630" step="1" y="695" max="100" width="250" display="road-density" height="50" min="0" direction="Horizontal" default="27.0" variable="road-density"></slider>
+    <slider x="885" step="1" y="695" max="100" width="250" display="road-connectiveness" height="50" min="0" direction="Horizontal" default="68.0" variable="road-connectiveness"></slider>
+    <slider x="630" step="1" y="750" max="100" width="250" display="proportion-of-integration" height="50" min="0" direction="Horizontal" default="0.0" variable="proportion-of-integration"></slider>
     <chooser x="375" y="805" height="60" variable="dynamic-venue-mode" current="2" width="250" display="dynamic-venue-mode">
       <choice type="string" value="none"></choice>
       <choice type="string" value="random"></choice>
@@ -1205,6 +1414,10 @@ plotxy utility-threshold plot-y-max</update>
       <choice type="string" value="erase-random"></choice>
     </chooser>
     <slider x="630" step="1" y="875" max="100" width="250" display="dynamic-road-param" height="50" min="0" direction="Horizontal" default="55.0" variable="dynamic-road-param"></slider>
+    <button x="115" y="980" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="150">visualize-venue-network</button>
+    <button x="115" y="1030" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="190">visualize-neighborhood-network</button>
+    <button x="115" y="1085" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="140">visualize-road-network</button>
+    <button x="115" y="1140" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="110">restore-grid-view</button>
   </widgets>
   <info>## ACKNOWLEDGMENT
 
