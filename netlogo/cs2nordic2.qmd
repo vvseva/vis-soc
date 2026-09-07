@@ -352,7 +352,6 @@ results_2f <- scenarios_2f |>
 save(results_2f, scenarios_2f, file = "results_2f_experiment.RData")
 ```
 
-
 ```{r}
 # Tidy and summarize trajectories
 traj_summary_2f <- results_2f |>
