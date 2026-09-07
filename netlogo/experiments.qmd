@@ -2199,7 +2199,7 @@ model_path <- "C:/Users/vsesu60/OneDrive - Linköpings universitet/Documents/R/v
 # -------------------------------------------------------------------------
 # 1. MODEL EXECUTION
 # -------------------------------------------------------------------------
-run_timeline_experiment <- function(model_path, repetitions = 5, max_steps = 800) {
+
 run_timeline_experiment <- function(model_path, repetitions = 5, max_steps = 800) {
   
   # Base configuration for the timeline experiment
@@ -2207,7 +2207,6 @@ run_timeline_experiment <- function(model_path, repetitions = 5, max_steps = 800
   "density-percent" = 70,
   "number-of-ethnicities" = 2,
   "proportion-majority" = 60,
-  "neighborhood-distance" = 5,
   "neighborhood-distance" = 5,
   "venues-number" = 0,
   "venue-catchment-distance" = 7, 
@@ -2229,12 +2228,8 @@ run_timeline_experiment <- function(model_path, repetitions = 5, max_steps = 800
   "intervention-scenario" = "random",
   "dynamic-venue-mode" = c("random", "integrated"),
   "dynamic-venues-number" = 18,
-  "dynamic-venue-mode" = c("random", "integrated"),
-  "dynamic-venues-number" = 18,
   "dynamic-road-mode" = "none",
   "dynamic-road-param" = 0,
-  "intervention-scenario" = "timeline-experiment", # Trigger the NetLogo logic
-  "random-seed?" = TRUE
   "intervention-scenario" = "timeline-experiment", # Trigger the NetLogo logic
   "random-seed?" = TRUE
   )
@@ -2493,11 +2488,7 @@ plot_segregation_world <- function(experiment_output, step_to_plot, subtitle_to_
       pxcor = as.numeric(pxcor), pycor = as.numeric(pycor),
       is_road_ = as.logical(ifelse(is.na(is_road_), FALSE, is_road_)),
       is_river_ = as.logical(ifelse(is.na(is_river_), FALSE, is_river_)),
-      render_color = case_when(is_river_ ~ "#4682B4", is_road_ ~ "#333333", TRUE ~ pcolor)
-      is_road_ = as.logical(ifelse(is.na(is_road_), FALSE, is_road_)),
-      is_river_ = as.logical(ifelse(is.na(is_river_), FALSE, is_river_)),
-      render_color = case_when(is_river_ ~ "#4682B4", is_road_ ~ "#333333", TRUE ~ pcolor)
-    )
+      render_color = case_when(is_river_ ~ "#4682B4", is_road_ ~ "#333333", TRUE ~ pcolor))
 
   # Families
   # Families
@@ -2505,7 +2496,6 @@ plot_segregation_world <- function(experiment_output, step_to_plot, subtitle_to_
     select(run_number, step, ends_with("_of_families")) |>
     unnest(cols = ends_with("_of_families")) |>
     rename_with(~ str_remove(.x, "_of_families")) |>
-    mutate(color = parse_netlogo_color(as.numeric(color)), xcor = as.numeric(xcor), ycor = as.numeric(ycor))
     mutate(color = parse_netlogo_color(as.numeric(color)), xcor = as.numeric(xcor), ycor = as.numeric(ycor))
 
   # Venues (Safe Extraction)
@@ -2551,10 +2541,8 @@ plot_segregation_world <- function(experiment_output, step_to_plot, subtitle_to_
 }
 
 plot_district_grid <- function(experiment_output, step_to_plot, run_to_plot = 1, subtitle_to_plot) {
-plot_district_grid <- function(experiment_output, step_to_plot, run_to_plot = 1, subtitle_to_plot) {
   list_data <- experiment_output$lists |> filter(step == step_to_plot, run_number == run_to_plot)
   
-  # 1. Parse patches for background map AND grid data
   # 1. Parse patches for background map AND grid data
   patches <- list_data |>
     select(run_number, step, ends_with("_of_patches")) |>
@@ -2586,12 +2574,12 @@ plot_district_grid <- function(experiment_output, step_to_plot, run_to_plot = 1,
     mutate(color = parse_netlogo_color(as.numeric(color)), xcor = as.numeric(xcor), ycor = as.numeric(ycor))
   
   # 3. Compute the 3x3 grid summaries
-      grid_id = as.numeric(grid_id), grid_segregation = as.numeric(grid_segregation),
-      pcolor = parse_netlogo_color(as.numeric(pcolor)),
-      is_road_ = as.logical(ifelse(is.na(is_road_), FALSE, is_road_)),
-      is_river_ = as.logical(ifelse(is.na(is_river_), FALSE, is_river_)),
-      render_color = case_when(is_river_ ~ "#4682B4", is_road_ ~ "#333333", TRUE ~ pcolor)
-    )
+    #   grid_id = as.numeric(grid_id), grid_segregation = as.numeric(grid_segregation),
+    #   pcolor = parse_netlogo_color(as.numeric(pcolor)),
+    #   is_road_ = as.logical(ifelse(is.na(is_road_), FALSE, is_road_)),
+    #   is_river_ = as.logical(ifelse(is.na(is_river_), FALSE, is_river_)),
+    #   render_color = case_when(is_river_ ~ "#4682B4", is_road_ ~ "#333333", TRUE ~ pcolor)
+    # )
   
   # 2. Parse families for background map
   families <- list_data |>
@@ -3162,6 +3150,88 @@ before_after <- p1 | p2
 
 before_after
 
-ggsave(before_after,filename =  "timeline_intervention_emergent_vworld2.png", width = 8, height = 4, dpi = 300, bg = "white")
+ggsave(before_after,filename =  "timeline_intervention_emergent_vworld2.png", 
+       width = 8, height = 4, dpi = 300, 
+       bg = "white")
+
+```
+
+### emergent-venues plus exclusivity
+
+```{r}
+run_timeline_experiment7 <- function(model_path, repetitions = 5, max_steps = 600) {
+  
+  # Base configuration for the timeline experiment
+  constants <- list(
+  "density-percent" = 70,
+  "number-of-ethnicities" = 2,
+  "proportion-majority" = 60,
+  "neighborhood-distance" = 5,
+  "venues-number" = 0,
+  "venue-catchment-distance" = 7, 
+  "venue-exclusivity" = c(0, 0.5, 1),
+  "beta1-neighbors" = 0.5,
+  "beta2-venue-group" = 0.5,
+  "beta3-venue-loc" = 0,
+  "beta4-home-venues" = 0,
+  "beta5-park-group" = 0,
+  "beta6-roads-group" = 0,
+  "travel-distance" = 5,
+  "road-multiplier" = 1,
+  "road-scenario" = "grid",
+  "road-density" = 0,
+  "road-connectiveness" = 80,
+  "parks-number" = 0, # Disabled to isolate the effect of venues
+  "intervention-scenario" = "random",
+  "dynamic-venue-mode" = "random",
+  "dynamic-venues-number" = 18,
+  "dynamic-road-mode" = "none",
+  "dynamic-road-param" = 0,
+  "intervention-scenario" = "emergent-venues", # Trigger the NetLogo logic
+  "random-seed?" = TRUE
+  )
+  
+  base_metrics <- c('index-exposure', 'index-dissimilarity', 'index-clustering', 'index-concentration')
+  
+  spatial_metrics <- c(
+    '[pxcor] of patches', '[pycor] of patches', '[pcolor] of patches', 
+    '[grid-id] of patches', '[grid-segregation] of patches', # Required for the 3x3 visualization
+    '[xcor] of families', '[ycor] of families', '[color] of families',
+    '[xcor] of venues', '[ycor] of venues', '[color] of venues'
+  )
+  
+  setup_file <- create_experiment(
+    name = "Timeline Intervention Scenario",
+    repetitions = repetitions,
+    run_metrics_every_step = TRUE,
+    setup = "setup",
+    go = "go",
+    time_limit = max_steps + 10, 
+    metrics = c(base_metrics, spatial_metrics),
+    # metrics = base_metrics,
+    constants = constants
+  )
+  
+  results <- model_path |> run_experiment(
+    setup_file = setup_file, 
+    # output = c("table", "lists"),
+    output = c("table")
+    )
+  
+  # Clean outputs
+  static_params <- names(constants)[lengths(constants) == 1]
+  static_cols <- str_replace_all(static_params, "-", "_")
+  
+  data_out <- results[["table"]] |> select(-any_of(static_cols))
+  # lists_out <- results[["lists"]] |> select(-any_of(static_cols))
+  
+  return(list(data = data_out, 
+              # lists = lists_out,
+              max_steps = max_steps))
+}
+
+exp_emergent_venues_exclusive <- run_timeline_experiment7(model_path,
+                                                  repetitions = 5, 
+                                                  max_steps = 600)
 ```
 

@@ -1,0 +1,399 @@
+---
+title: "cs2nordic2"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(logolink)
+library(patchwork)
+library(colorspace)
+library(ggnewscale)
+
+model_path <- "C:/Users/vsesu60/OneDrive - Linköpings universitet/Documents/R/vis-soc/netlogo/roads/Segregation Interventions.nlogox"
+library(ggnewscale)
+
+model_path <- "C:/Users/vsesu60/OneDrive - Linköpings universitet/Documents/R/vis-soc/netlogo/roads/Segregation Interventions.nlogox"
+
+# 1. Parameter Grid for Post-Tick-400 Beta Values
+scenarios <- tibble(
+  beta1_neighbors  = c(1.00, 0.75, 0.50, 0.25, 0.00),
+  beta2_venue_group = c(0.00, 0.25, 0.50, 0.75, 1.00),
+  scenario_label   = c(
+    "1. Only Neighbors (1.0 / 0.0)",
+    "2. High Neighbors (0.75 / 0.25)",
+    "3. Balanced (0.50 / 0.50)",
+    "4. High Venues (0.25 / 0.75)",
+    "5. Only Venues (0.00 / 1.0)"
+  )
+)
+
+constants <- list(
+  "density-percent"             = 70,
+  "number-of-ethnicities"       = 2,
+  "proportion-majority"         = 60,
+  "neighborhood-distance"       = 5,
+  "venues-number"               = 18,
+  "venue-catchment-distance"    = 7,
+  "venue-exclusivity"           = 1.0,
+  "proportion-of-integration"   = 100,
+  "intervention-scenario"       = "emergent-venues",
+  "travel-distance"             = 5,
+  "road-multiplier"             = 1,
+  "road-scenario"               = "empty",
+  "road-density"                = 0,
+  "parks-number"                = 0,
+  "beta1-neighbors"   = scenarios$beta1_neighbors,
+  "beta2-venue-group" = scenarios$beta2_venue_group,
+  "beta3-venue-loc"             = 0,
+  "beta4-home-venues"           = 0,
+  "beta5-park-group"            = 0,
+  "beta6-roads-group"           = 0,
+  "random-seed?"                = TRUE
+)
+
+# 2. Setup BehaviorSpace via logolink
+setup_file <- create_experiment(
+  name = "Beta_Weight_Transition_Experiment",
+  repetitions = 5,
+  run_metrics_every_step = TRUE,
+  setup = "setup",
+  go = "go",
+  time_limit = 800,
+  metrics = c(
+    "index-exposure", 
+    "index-dissimilarity", 
+    "index-clustering", 
+    "index-concentration"
+  ),
+  constants = constants
+)
+
+raw_results <- model_path |> 
+  run_experiment(setup_file = setup_file, output = "table")
+
+# 3. Clean and Structure Data
+results_df <- raw_results$table |>
+  janitor::clean_names() |>
+  pivot_longer(
+    cols = starts_with("index_"),
+    names_to = "metric",
+    values_to = "value"
+  ) |>
+  mutate(metric = str_to_title(str_remove(metric, "index_")))
+```
+
+
+```{r}
+run_scenarios <- results_df |>
+  group_by(run_number) |>
+  filter(step == max(step)) |>
+  slice(1) |>
+  ungroup() |>
+  select(run_number, final_beta1 = beta1_neighbors, final_beta2 = beta2_venue_group) |>
+  mutate(
+    scenario_label = case_when(
+      near(final_beta1, 1.00) & near(final_beta2, 0.00) ~ "1. Only Neighbors (1.0 / 0.0)",
+      near(final_beta1, 0.75) & near(final_beta2, 0.25) ~ "2. High Neighbors (0.75 / 0.25)",
+      near(final_beta1, 0.50) & near(final_beta2, 0.50) ~ "3. Balanced (0.50 / 0.50)",
+      near(final_beta1, 0.25) & near(final_beta2, 0.75) ~ "4. High Venues (0.25 / 0.75)",
+      near(final_beta1, 0.00) & near(final_beta2, 1.00) ~ "5. Only Venues (0.00 / 1.0)",
+      TRUE ~ str_glue("Custom ({round(final_beta1, 2)} / {round(final_beta2, 2)})")
+    )
+  ) |> 
+  select(-final_beta1, -final_beta2)
+
+results_df <- results_df |>
+  left_join(run_scenarios |> select(run_number, scenario_label), by = "run_number")
+
+# Mean trajectory by scenario and metric
+mean_trajectories <- results_df |>
+  group_by(step, metric, scenario_label) |>
+  summarize(mean_val = mean(value, na.rm = TRUE), .groups = "drop")
+
+p_trajectories <- ggplot() +
+  # Warm-up reference band
+  annotate("rect", xmin = 0, xmax = 400, ymin = -Inf, ymax = Inf, 
+           fill = "gray95", alpha = 0.8) +
+  # Individual simulation runs
+  geom_line(
+    data = results_df,
+    aes(x = step, y = value, group = interaction(run_number, scenario_label), color = scenario_label),
+    alpha = 0.15, linewidth = 0.4
+  ) +
+  # Mean scenario lines
+  geom_line(
+    data = mean_trajectories,
+    aes(x = step, y = mean_val, color = scenario_label),
+    linewidth = 1.1
+  ) +
+  geom_vline(xintercept = 400, linetype = "dashed", color = "gray30") +
+  annotate("text", x = 410, y = Inf, label = "Venues Added & Betas Switched", 
+           hjust = 0, vjust = 1.5, size = 3.5, fontface = "italic", color = "gray20") +
+  facet_wrap(~ metric, scales = "free_y", ncol = 2) +
+  scale_color_brewer(palette = "Dark2", name = "Post-400 Beta Mix") +
+  labs(
+    title = "Sustaining Segregation: Neighborhood Proximity vs. Venue Affiliation",
+    subtitle = "Ticks 0–400: Baseline Emergence (Beta1 = 0.5, Beta2 = 0) | Ticks 400–800: Venue Mechanisms",
+    x = "Simulation Tick",
+    y = "Index Value"
+  ) +
+  xlim(300, 800)+
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+# Terminal State Boxplot (Step 800 Distribution)
+p_terminal <- results_df |>
+  filter(step == 800) |>
+  ggplot(aes(x = scenario_label, y = value, fill = scenario_label)) +
+  geom_boxplot(alpha = 0.8, outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.5, size = 1.5) +
+  facet_wrap(~ metric, scales = "free_y", ncol = 2) +
+  scale_fill_brewer(palette = "Dark2") +
+  coord_flip() +
+  labs(
+    title = "Final Segregation State at Tick 800",
+    x = NULL,
+    y = "Index Value"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+final_plot <- p_trajectories / p_terminal + plot_layout(heights = c(2, 1.2))
+print(final_plot)
+```
+
+```{r}
+library(tidyverse)
+library(patchwork)
+
+# 1. Target trade-off levels to filter down to 5 scenarios
+target_scenarios <- tibble(
+  beta1 = c(1.00, 0.75, 0.50, 0.25, 0.00),
+  beta2 = c(0.00, 0.25, 0.50, 0.75, 1.00),
+  clean_label = factor(
+    c(
+      "Neighbors Only (1.0 / 0.0)",
+      "High Neighbors (0.75 / 0.25)",
+      "Equal Mix (0.50 / 0.50)",
+      "High Venues (0.25 / 0.75)",
+      "Venues Only (0.00 / 1.0)"
+    ),
+    levels = c(
+      "Neighbors Only (1.0 / 0.0)",
+      "High Neighbors (0.75 / 0.25)",
+      "Equal Mix (0.50 / 0.50)",
+      "High Venues (0.25 / 0.75)",
+      "Venues Only (0.00 / 1.0)"
+    )
+  )
+)
+
+# 2. Filter data directly without pivoting
+filtered_df <- results_df |>
+  group_by(run_number) |>
+  mutate(
+    final_b1 = beta1_neighbors[step == max(step)][1],
+    final_b2 = beta2_venue_group[step == max(step)][1]
+  ) |>
+  ungroup() |>
+  inner_join(target_scenarios, by = c("final_b1" = "beta1", "final_b2" = "beta2")) |>
+  mutate(
+    metric = str_remove(metric, "^index[_-]"),
+    metric = str_to_title(metric),
+    metric = factor(metric, levels = c("Dissimilarity", "Clustering", "Exposure", "Concentration"))
+  )
+
+# 3. Calculate summary trajectories (Median + IQR ribbons)
+summary_trajectories <- filtered_df |>
+  filter(step >= 300) |>
+  group_by(step, metric, clean_label) |>
+  summarize(
+    median_val = median(value, na.rm = TRUE),
+    q25 = quantile(value, 0.25, na.rm = TRUE),
+    q75 = quantile(value, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# 4. Trajectory Plot
+p_trajectories <- ggplot(summary_trajectories, aes(x = step, color = clean_label, fill = clean_label)) +
+  geom_ribbon(aes(ymin = q25, ymax = q75), alpha = 0.18, color = NA) +
+  geom_line(aes(y = median_val), linewidth = 1.0) +
+  geom_vline(xintercept = 400, linetype = "dashed", color = "gray40") +
+  annotate("text", x = 408, y = Inf, label = "Venues Added (Tick 400)", 
+           hjust = 0, vjust = 1.6, size = 3.5, color = "gray30", fontface = "italic") +
+  facet_wrap(~ metric, scales = "free_y", ncol = 2) +
+  scale_color_viridis_d(option = "plasma", end = 0.9, name = "Post-400 Weights (β1 / β2)") +
+  scale_fill_viridis_d(option = "plasma", end = 0.9, name = "Post-400 Weights (β1 / β2)") +
+  labs(
+    title = "Macro Segregation Dynamics Under Venue vs. Neighbor Utility",
+    subtitle = "Ribbons show IQR across runs | Equilibrium reached before tick 400",
+    x = "Simulation Tick",
+    y = "Index Value"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold", size = 11)
+  )
+
+
+# 6. Combined View
+p_trajectories
+
+ggsave(p_trajectories,filename =  "venues_location_relaxation.png", 
+       width = 8, height = 4, dpi = 300, 
+       bg = "white")
+```
+
+
+### Venue exclusivity and relaxation 
+
+```{r}
+library(tidyverse)
+library(logolink)
+
+# 1. Define Factorial Conditions (5 beta pairs x 4 exclusivity levels = 20 scenarios)
+beta_pairs <- tibble(
+  beta1_target = c(1.00, 0.75, 0.50, 0.25, 0.00),
+  beta2_target = c(0.00, 0.25, 0.50, 0.75, 1.00),
+  beta_label   = factor(
+    c("Neighbors Only (1.0 / 0.0)", 
+      "High Neighbors (0.75 / 0.25)", 
+      "Equal Mix (0.50 / 0.50)", 
+      "High Venues (0.25 / 0.75)", 
+      "Venues Only (0.00 / 1.0)"),
+    levels = c("Neighbors Only (1.0 / 0.0)", 
+               "High Neighbors (0.75 / 0.25)", 
+               "Equal Mix (0.50 / 0.50)", 
+               "High Venues (0.25 / 0.75)", 
+               "Venues Only (0.00 / 1.0)")
+  )
+)
+
+exclusivity_levels <- tibble(
+  exclusivity = c(1.00, 0.75, 0.25, 0.00),
+  excl_label  = factor(
+    c("Strict (1.0)", "High (0.75)", "Low (0.25)", "Universal (0.0)"),
+    levels = c("Strict (1.0)", "High (0.75)", "Low (0.25)", "Universal (0.0)")
+  )
+)
+
+scenarios_2f <- crossing(beta_pairs, exclusivity_levels)
+
+# 2. Base Model Constants
+base_constants <- list(
+  "density-percent"           = 70,
+  "number-of-ethnicities"     = 2,
+  "proportion-majority"       = 60,
+  "neighborhood-distance"     = 5,
+  "venues-number"             = 18,
+  "venue-catchment-distance"  = 7,
+  "proportion-of-integration" = 100,
+  "intervention-scenario"     = "emergent-venues",
+  "travel-distance"           = 5,
+  "road-multiplier"           = 1,
+  "road-scenario"             = "empty",
+  "road-density"              = 0,
+  "parks-number"              = 0,
+  "beta3-venue-loc"           = 0,
+  "beta4-home-venues"         = 0,
+  "beta5-park-group"          = 0,
+  "beta6-roads-group"         = 0,
+  "random-seed?"              = TRUE
+)
+
+# 3. Execution Pipeline
+results_2f <- scenarios_2f |>
+  mutate(batch_id = row_number()) |>
+  pmap(function(beta1_target, beta2_target, beta_label, exclusivity, excl_label, batch_id) {
+    run_constants <- c(
+      base_constants,
+      list(
+        "beta1-neighbors"   = beta1_target,
+        "beta2-venue-group" = beta2_target,
+        "venue-exclusivity" = exclusivity
+      )
+    )
+    
+    setup_file <- create_experiment(
+      name = paste0("Exp_Batch_", batch_id),
+      repetitions = 5,
+      run_metrics_every_step = TRUE,
+      setup = "setup",
+      go = "go",
+      time_limit = 800,
+      metrics = c("index-exposure", "index-dissimilarity", "index-clustering", "index-concentration"),
+      constants = run_constants
+    )
+    
+    # Extract [["table"]] from the logolink output list before calling mutate
+    raw_output <- model_path |>
+      run_experiment(setup_file = setup_file, output = "table")
+    
+    raw_output[["table"]] |>
+      mutate(
+        beta_label = beta_label,
+        excl_label = excl_label,
+        venue_exclusivity = exclusivity
+      )
+  }) |>
+  list_rbind()
+
+save(results_2f, scenarios_2f, file = "results_2f_experiment.RData")
+```
+
+
+```{r}
+# Tidy and summarize trajectories
+traj_summary_2f <- results_2f |>
+  janitor::clean_names() |>
+  pivot_longer(cols = starts_with("index_"), names_to = "metric", values_to = "value") |>
+  mutate(
+    metric = str_to_title(str_remove(metric, "index_")),
+    metric = factor(metric, levels = c("Dissimilarity", "Clustering", "Exposure", "Concentration"))
+  ) |>
+  filter(step >= 350) |>
+  filter(metric != "Concentration") |> 
+  group_by(step, metric, excl_label, beta_label) |>
+  summarize(
+    median_val = median(value, na.rm = TRUE),
+    q25 = quantile(value, 0.25, na.rm = TRUE),
+    q75 = quantile(value, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+g_traj_summary_2f <- ggplot(traj_summary_2f, aes(x = step, color = beta_label, fill = beta_label)) +
+  geom_ribbon(aes(ymin = q25, ymax = q75), alpha = 0.15, color = NA) +
+  geom_line(aes(y = median_val), linewidth = 0.9) +
+  geom_vline(xintercept = 400, linetype = "dashed", color = "gray40", linewidth = 0.5) +
+  facet_grid(metric ~ excl_label, scales = "free_y") +
+  scale_color_viridis_d(option = "plasma", end = 0.88, name = "Utility Weights (β1 / β2)") +
+  scale_fill_viridis_d(option = "plasma", end = 0.88, name = "Utility Weights (β1 / β2)") +
+  labs(
+    title = "Macro Segregation Trajectories by Exclusivity and Utility Weights",
+    subtitle = "Columns: Venue Exclusivity | Rows: Massey & Denton Segregation Dimensions (Ticks 350–800)",
+    x = "Tick",
+    y = "Index Value"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold")
+  )
+
+ggsave(g_traj_summary_2f, filename =  "venues_exclusivity_relaxation.png", 
+       width = 8, height = 4, dpi = 300, 
+       bg = "white")
+```
+
