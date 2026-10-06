@@ -1,0 +1,395 @@
+---
+title: "Segregation Experiments: Third Places and Spatial Dynamics"
+subtitle: "Simulation Parameter Sweeps and Macro Metric Analysis"
+author: "Vsevolod Suschevskiy & Benjamin Jarvis"
+institute: "Linköping University"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    theme: cosmo
+    code-fold: show
+    code-tools: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## 1. Overview & Experimental Architecture
+
+This document runs and analyzes computational experiments using the refactored **`Segregation Experiments.nlogox`** agent-based model. 
+
+### Key Improvements in the Refactored Model
+1. **First-Class Parameterization**: Fixed thresholds and intervention timings are promoted to explicit model controls (`pre-beta1-neighbors`, `pre-beta2-venue-group`, `post-beta1-neighbors`, `post-beta2-venue-group`, `intervention-tick`, `emergent-venue-capacity`, `relocation-fraction`, `clustering-sample-size`).
+2. **Lean Headless Execution**: Stripped unused NetLogo extensions (`gis`, `nw`, `dbscan`), removed unused links, and eliminated blocking GUI dialogs.
+3. **High-Performance Implementations**: Replaced the $O(N^2)$ clustering metric bottleneck with parameterized Monte Carlo sampling (`clustering-sample-size = 150`), converted Lloyd's medoid search to an $O(N)$ centroid medoid locator, and pre-cached static census tract centers.
+4. **Resolved Variable Collisions**: Added `tracker-id` to `families-own` to protect patch `grid-id` macro district coordinates during emergent Voronoi clustering.
+
+```{r setup}
+library(tidyverse)
+library(logolink)
+library(patchwork)
+library(colorspace)
+library(ggnewscale)
+library(janitor)
+
+# Absolute path to the refactored NetLogo model
+model_path <- normalizePath(
+  "roads/Segregation Experiments.nlogox",
+  mustWork = TRUE
+)
+```
+
+---
+
+## 2. Experiment 1: Beta Weight Transition Sweep
+
+In this experiment, agents form baseline residential segregation between Ticks 0 and 400 under residential homophily ($\beta_1 = 0.50, \beta_2 = 0.00$). At Tick 400, emergent venues are spawned using Lloyd's Voronoi relaxation, and utility weights transition to one of five target mixes.
+
+### 2.1 Design Matrix & Constants
+
+```{r exp1-config}
+# Target trade-off levels post-tick-400
+scenarios <- tibble(
+  post_beta1 = c(1.00, 0.75, 0.50, 0.25, 0.00),
+  post_beta2 = c(0.00, 0.25, 0.50, 0.75, 1.00),
+  scenario_label = factor(
+    c(
+      "1. Only Neighbors (1.0 / 0.0)",
+      "2. High Neighbors (0.75 / 0.25)",
+      "3. Balanced (0.50 / 0.50)",
+      "4. High Venues (0.25 / 0.75)",
+      "5. Only Venues (0.00 / 1.0)"
+    ),
+    levels = c(
+      "1. Only Neighbors (1.0 / 0.0)",
+      "2. High Neighbors (0.75 / 0.25)",
+      "3. Balanced (0.50 / 0.50)",
+      "4. High Venues (0.25 / 0.75)",
+      "5. Only Venues (0.00 / 1.0)"
+    )
+  )
+)
+
+base_constants_exp1 <- list(
+  "density-percent"           = 70,
+  "number-of-ethnicities"     = 2,
+  "proportion-majority"       = 60,
+  "neighborhood-distance"     = 5,
+  "venues-number"             = 18,
+  "venue-catchment-distance"  = 7,
+  "venue-exclusivity"         = 1.0,
+  "proportion-of-integration" = 100,
+  "intervention-scenario"     = "emergent-venues",
+  "intervention-tick"         = 400,
+  "emergent-venue-capacity"   = 50,
+  "relocation-fraction"       = 0.10,
+  "clustering-sample-size"    = 150,
+  "pre-beta1-neighbors"       = 0.50,
+  "pre-beta2-venue-group"     = 0.00,
+  "post-beta1-neighbors"      = scenarios$post_beta1,
+  "post-beta2-venue-group"    = scenarios$post_beta2,
+  "beta3-venue-loc"           = 0,
+  "beta4-home-venues"         = 0,
+  "beta5-park-group"          = 0,
+  "beta6-roads-group"         = 0,
+  "travel-distance"           = 5,
+  "road-multiplier"           = 1,
+  "road-scenario"             = "empty",
+  "road-density"              = 0,
+  "parks-number"              = 0,
+  "random-seed?"              = TRUE
+)
+```
+
+### 2.2 Execution via logolink
+
+```{r exp1-execution}
+setup_file_exp1 <- create_experiment(
+  name = "Beta_Weight_Transition_Experiment",
+  repetitions = 5,
+  run_metrics_every_step = TRUE,
+  setup = "setup",
+  go = "go",
+  time_limit = 800,
+  metrics = c(
+    "index-exposure",
+    "index-dissimilarity",
+    "index-clustering",
+    "index-concentration"
+  ),
+  constants = base_constants_exp1
+)
+
+raw_results_exp1 <- model_path |>
+  run_experiment(setup_file = setup_file_exp1, output = "table")
+
+# Tidy output table
+results_exp1 <- raw_results_exp1[["table"]] |>
+  clean_names() |>
+  pivot_longer(
+    cols = starts_with("index_"),
+    names_to = "metric",
+    values_to = "value"
+  ) |>
+  mutate(
+    metric = str_to_title(str_remove(metric, "index_")),
+    metric = factor(metric, levels = c("Dissimilarity", "Clustering", "Exposure", "Concentration"))
+  )
+```
+
+### 2.3 Trajectory & Distribution Visualization
+
+```{r exp1-plots, fig.width=10, fig.height=8}
+# Map scenario labels onto individual simulation runs
+run_labels <- results_exp1 |>
+  group_by(run_number) |>
+  filter(step == max(step)) |>
+  slice(1) |>
+  ungroup() |>
+  select(run_number, post_b1 = post_beta1_neighbors, post_b2 = post_beta2_venue_group) |>
+  left_join(scenarios, by = c("post_b1" = "post_beta1", "post_b2" = "post_beta2"))
+
+results_exp1 <- results_exp1 |>
+  left_join(run_labels |> select(run_number, scenario_label), by = "run_number")
+
+# Trajectory ribbons (Median + IQR)
+summary_traj_exp1 <- results_exp1 |>
+  filter(step >= 300) |>
+  group_by(step, metric, scenario_label) |>
+  summarize(
+    median_val = median(value, na.rm = TRUE),
+    q25 = quantile(value, 0.25, na.rm = TRUE),
+    q75 = quantile(value, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+p_trajectories <- ggplot(summary_traj_exp1, aes(x = step, color = scenario_label, fill = scenario_label)) +
+  geom_ribbon(aes(ymin = q25, ymax = q75), alpha = 0.18, color = NA) +
+  geom_line(aes(y = median_val), linewidth = 1.0) +
+  geom_vline(xintercept = 400, linetype = "dashed", color = "gray40") +
+  annotate(
+    "text", x = 408, y = Inf, label = "Emergent Venues Added (Tick 400)",
+    hjust = 0, vjust = 1.6, size = 3.5, color = "gray30", fontface = "italic"
+  ) +
+  facet_wrap(~ metric, scales = "free_y", ncol = 2) +
+  scale_color_viridis_d(option = "plasma", end = 0.9, name = "Post-400 Weights (β1 / β2)") +
+  scale_fill_viridis_d(option = "plasma", end = 0.9, name = "Post-400 Weights (β1 / β2)") +
+  labs(
+    title = "Macro Segregation Dynamics Under Venue vs. Neighbor Utility",
+    subtitle = "Ribbons indicate IQR across simulation runs | Pre-shock baseline (β1=0.5, β2=0)",
+    x = "Simulation Tick",
+    y = "Index Value"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold", size = 11)
+  )
+
+# Terminal Distribution at Tick 800
+p_terminal <- results_exp1 |>
+  filter(step == 800) |>
+  ggplot(aes(x = scenario_label, y = value, fill = scenario_label)) +
+  geom_boxplot(alpha = 0.8, outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.5, size = 1.5) +
+  facet_wrap(~ metric, scales = "free_y", ncol = 2) +
+  scale_fill_viridis_d(option = "plasma", end = 0.9) +
+  coord_flip() +
+  labs(
+    title = "Terminal Segregation State at Tick 800",
+    x = NULL,
+    y = "Index Value"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+combined_plot_exp1 <- p_trajectories / p_terminal + plot_layout(heights = c(2, 1.2))
+print(combined_plot_exp1)
+
+ggsave(
+  "experiments_beta_transition.png",
+  combined_plot_exp1,
+  width = 9,
+  height = 9,
+  dpi = 300,
+  bg = "white"
+)
+```
+
+---
+
+## 3. Experiment 2: Factorial Sweep (Utility Weights × Venue Exclusivity)
+
+This experiment investigates how **venue exclusivity** interacts with utility weights to modulate segregation outcomes across 20 distinct conditions ($5 \text{ beta mixes} \times 4 \text{ exclusivity levels}$).
+
+### 3.1 Factorial Grid Setup
+
+```{r exp2-grid}
+beta_pairs <- tibble(
+  beta1_target = c(1.00, 0.75, 0.50, 0.25, 0.00),
+  beta2_target = c(0.00, 0.25, 0.50, 0.75, 1.00),
+  beta_label   = factor(
+    c(
+      "Neighbors Only (1.0 / 0.0)", 
+      "High Neighbors (0.75 / 0.25)", 
+      "Equal Mix (0.50 / 0.50)", 
+      "High Venues (0.25 / 0.75)", 
+      "Venues Only (0.00 / 1.0)"
+    ),
+    levels = c(
+      "Neighbors Only (1.0 / 0.0)", 
+      "High Neighbors (0.75 / 0.25)", 
+      "Equal Mix (0.50 / 0.50)", 
+      "High Venues (0.25 / 0.75)", 
+      "Venues Only (0.00 / 1.0)"
+    )
+  )
+)
+
+exclusivity_levels <- tibble(
+  exclusivity = c(1.00, 0.75, 0.25, 0.00),
+  excl_label  = factor(
+    c("Strict (1.0)", "High (0.75)", "Low (0.25)", "Universal (0.0)"),
+    levels = c("Strict (1.0)", "High (0.75)", "Low (0.25)", "Universal (0.0)")
+  )
+)
+
+scenarios_factorial <- crossing(beta_pairs, exclusivity_levels)
+```
+
+### 3.2 Factorial Batch Execution Pipeline
+
+```{r exp2-execution}
+base_constants_exp2 <- list(
+  "density-percent"           = 70,
+  "number-of-ethnicities"     = 2,
+  "proportion-majority"       = 60,
+  "neighborhood-distance"     = 5,
+  "venues-number"             = 18,
+  "venue-catchment-distance"  = 7,
+  "proportion-of-integration" = 100,
+  "intervention-scenario"     = "emergent-venues",
+  "intervention-tick"         = 400,
+  "emergent-venue-capacity"   = 50,
+  "relocation-fraction"       = 0.10,
+  "clustering-sample-size"    = 150,
+  "pre-beta1-neighbors"       = 0.50,
+  "pre-beta2-venue-group"     = 0.00,
+  "travel-distance"           = 5,
+  "road-multiplier"           = 1,
+  "road-scenario"             = "empty",
+  "road-density"              = 0,
+  "parks-number"              = 0,
+  "beta3-venue-loc"           = 0,
+  "beta4-home-venues"         = 0,
+  "beta5-park-group"          = 0,
+  "beta6-roads-group"         = 0,
+  "random-seed?"              = TRUE
+)
+
+results_factorial <- scenarios_factorial |>
+  mutate(batch_id = row_number()) |>
+  pmap(function(beta1_target, beta2_target, beta_label, exclusivity, excl_label, batch_id) {
+    run_constants <- c(
+      base_constants_exp2,
+      list(
+        "post-beta1-neighbors"   = beta1_target,
+        "post-beta2-venue-group" = beta2_target,
+        "venue-exclusivity"      = exclusivity
+      )
+    )
+    
+    setup_file <- create_experiment(
+      name = paste0("Exp_Batch_", batch_id),
+      repetitions = 5,
+      run_metrics_every_step = TRUE,
+      setup = "setup",
+      go = "go",
+      time_limit = 800,
+      metrics = c("index-exposure", "index-dissimilarity", "index-clustering", "index-concentration"),
+      constants = run_constants
+    )
+    
+    raw_output <- model_path |>
+      run_experiment(setup_file = setup_file, output = "table")
+    
+    raw_output[["table"]] |>
+      mutate(
+        beta_label = beta_label,
+        excl_label = excl_label,
+        venue_exclusivity = exclusivity
+      )
+  }) |>
+  list_rbind()
+
+save(results_factorial, scenarios_factorial, file = "results_experiments_2f.RData")
+```
+
+### 3.3 Factorial Grid Trajectory Plot
+
+```{r exp2-plot, fig.width=10, fig.height=6}
+traj_summary_factorial <- results_factorial |>
+  clean_names() |>
+  pivot_longer(cols = starts_with("index_"), names_to = "metric", values_to = "value") |>
+  mutate(
+    metric = str_to_title(str_remove(metric, "index_")),
+    metric = factor(metric, levels = c("Dissimilarity", "Clustering", "Exposure", "Concentration"))
+  ) |>
+  filter(step >= 350) |>
+  filter(metric != "Concentration") |> 
+  group_by(step, metric, excl_label, beta_label) |>
+  summarize(
+    median_val = median(value, na.rm = TRUE),
+    q25 = quantile(value, 0.25, na.rm = TRUE),
+    q75 = quantile(value, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+p_factorial <- ggplot(traj_summary_factorial, aes(x = step, color = beta_label, fill = beta_label)) +
+  geom_ribbon(aes(ymin = q25, ymax = q75), alpha = 0.15, color = NA) +
+  geom_line(aes(y = median_val), linewidth = 0.9) +
+  geom_vline(xintercept = 400, linetype = "dashed", color = "gray40", linewidth = 0.5) +
+  facet_grid(metric ~ excl_label, scales = "free_y") +
+  scale_color_viridis_d(option = "plasma", end = 0.88, name = "Utility Weights (β1 / β2)") +
+  scale_fill_viridis_d(option = "plasma", end = 0.88, name = "Utility Weights (β1 / β2)") +
+  labs(
+    title = "Macro Segregation Trajectories by Exclusivity and Utility Weights",
+    subtitle = "Columns: Venue Exclusivity | Rows: Massey & Denton Segregation Dimensions (Ticks 350–800)",
+    x = "Simulation Tick",
+    y = "Index Value"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold")
+  )
+
+print(p_factorial)
+
+ggsave(
+  "experiments_exclusivity_relaxation.png",
+  p_factorial,
+  width = 9,
+  height = 5,
+  dpi = 300,
+  bg = "white"
+)
+```
+
+---
+
+## 4. Key Takeaways
+
+1. **The Amenity Anchor Mechanism**: When agents shift utility towards venue co-attendance ($\beta_2 \to 1.0$), residential dissimilarity drops markedly because shared destinations decouple residential location from group segregation.
+2. **Porous vs. Exclusive Third Places**:
+   - Under **Strict Exclusivity** ($1.0$), mono-ethnic third places act as demographic magnets that anchor households into hyper-segregated residential pockets.
+   - Under **Universal Access** ($0.0$), agents encounter diverse co-patrons across venues, breaking the need for segregated residential sorting even when individual homophilic preferences remain intact.
