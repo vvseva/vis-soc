@@ -1,0 +1,38 @@
+---
+title: "Venue-based Interventions in an Agent-Based Model of Residential Segregation"
+author: "Vsevolod Suschevskiy, Linköping University, Benjamin Jarvis, Linköping University"
+format:
+  beamer:
+    theme: Madrid
+    colortheme: whale
+    outertheme: smoothbars
+    fonttheme: structurebold
+    navigation: horizontal
+    header-includes:
+      - \usecolortheme[RGB={0,43,127}]{structure}
+---
+
+## Plan
+
+* Venues as an important element of residential segregation
+* Analytical (sociology) framework
+* ABM Design concepts
+* I will try to convince you that my model is reasonable
+* Simulation results
+* What is next and public engagement
+
+## Template Slide One: Model Overview
+
+Agent-based modeling enables systematic testing of spatial interventions on neighborhood sorting dynamics.
+
+* Street networks form local neighborhood connectivity, while expressways function as barriers[cite: 1, 2].
+* Venues provide agents with alternative utility anchors outside immediate residential blocks[cite: 1, 2].
+* Agents evaluate location utility using a weighted combination of neighbor composition and venue accessibility[cite: 1, 2].
+
+## Template Slide Two: Findings and Directions
+
+Simulations reveal critical divergences across geographic scales following amenity-based interventions[cite: 1].
+
+* Localized venue placement alters meso-level cluster concentrations without changing macro indices[cite: 1].
+* System-wide integrated placements fracture macro residential segregation enclaves[cite: 1].
+* Interactive physicalizations translate simulation dynamics into tangible public exploranations[cite: 1, 2].
