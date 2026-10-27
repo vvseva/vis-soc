@@ -30,16 +30,19 @@ vis-soc/
 ├── README.md                                  <- Root project documentation
 ├── netlogo/
 │   ├── roads/
-│   │   ├── Segregation Interventions.nlogox   <- Flagship NetLogo model (latest)
+│   │   ├── Segregation Experiments.nlogox     <- Experiment-optimized model (fully parameterized, high-speed)
+│   │   ├── Segregation Interventions.nlogox   <- Interactive interventions model with UI visualizations
 │   │   ├── Segregation Utility.nlogox         <- Baseline multi-attribute model
 │   │   ├── Segregation roads.nlogox           <- Road network extension
 │   │   └── *.shp, *.dbf                       <- Spatial shapefiles (Norrköping geographic data)
+│   ├── segregation_experiments.qmd            <- Dedicated Quarto pipeline for Segregation Experiments.nlogox
 │   ├── cs2nordic2.qmd                         <- Primary R analysis & BehaviorSpace experiment pipeline
 │   ├── slidesCS2Nordic.qmd                    <- CS2Nordics 2026 Reveal.js slide deck
 │   ├── slidesCS2Nordic.html                   <- Rendered conference presentation
 │   ├── experiments.qmd                        <- Parameter sweeps and empirical benchmarks
 │   ├── *.png, *.gif                           <- Publication plots and simulation animations
-│   └── results_2f_experiment.RData            <- Cached factorial simulation outputs
+│   ├── results_experiments_2f.RData          <- Output data from Segregation Experiments factorial run
+│   └── results_2f_experiment.RData            <- Output data from earlier factorial simulation runs
 ├── shiny/
 │   └── logolink_shiny/
 │       ├── app.R                              <- Interactive Shiny web interface for logolink
@@ -52,9 +55,37 @@ vis-soc/
 
 ---
 
-## Core Model: `Segregation Interventions.nlogox`
+## Simulation Models
 
-The latest simulation model is located at [`netlogo/roads/Segregation Interventions.nlogox`](netlogo/roads/Segregation%20Interventions.nlogox).
+### 1. `Segregation Experiments.nlogox` *(Recommended for Batch Sweeps & R)*
+
+Located at [`netlogo/roads/Segregation Experiments.nlogox`](netlogo/roads/Segregation%20Experiments.nlogox).  
+This model is specifically refactored for automated batch execution via `logolink` and BehaviorSpace:
+
+- **First-Class Parameterization**: Fixed thresholds and intervention timings are exposed as clean model controls:
+  - `pre-beta1-neighbors` (default `0.50`) & `pre-beta2-venue-group` (default `0.00`): Baseline residential homophily phase.
+  - `post-beta1-neighbors` (default `1.00`) & `post-beta2-venue-group` (default `0.00`): Post-intervention target utility weights.
+  - `intervention-tick` (default `400`): Exact step when policy shocks or emergent amenities activate.
+  - `emergent-venue-capacity` (default `50`): Population mass per emergent venue ($K = \lceil N / \text{cap} \rceil$).
+  - `relocation-fraction` (default `0.10`): Proportion of least-satisfied households relocating per tick ($10\%$).
+  - `utility-noise-sd` (default `0.10`): Standard deviation of Gaussian utility perturbation.
+  - `clustering-sample-size` (default `150`): Monte Carlo sample size for exponential spatial clustering.
+  - `timeline-stage-interval` (default `100`): Spacing between staged timeline rollouts.
+- **High-Performance Implementations**:
+  - Replaced $O(N^2)$ distance loops in clustering metrics with an efficient Monte Carlo sample ($n = 150$), reducing evaluations by $>99\%$ with zero loss of statistical validity.
+  - Replaced pairwise distance searches in Lloyd's medoid calculation with an $O(N)$ centroid center-of-mass medoid lookup.
+  - Pre-cached static census tract centers (`tract-centers`) and barrier presence (`has-rivers?`) during setup.
+- **Bug Fix**: Added `tracker-id` to `families-own` to prevent Voronoi tracker IDs from overwriting the patch `grid-id` macro district coordinates.
+- **Zero-Dependency Headless Footprint**: Stripped unused NetLogo extensions (`gis`, `nw`, `dbscan`), removed unused link breeds, and decoupled interactive GUI mouse loops to guarantee rock-solid headless batch execution.
+
+### 2. `Segregation Interventions.nlogox` *(Interactive GUI Model)*
+
+Located at [`netlogo/roads/Segregation Interventions.nlogox`](netlogo/roads/Segregation%20Interventions.nlogox).  
+Includes interactive GUI widgets, manual venue/road drawing tools, and spring-physics network visualization routines (`visualize-venue-network`, `visualize-road-network`).
+
+---
+
+## Model Mechanics
 
 ### 1. Conceptual Framework (Coleman's Boat)
 
@@ -67,7 +98,7 @@ Micro Level:     [ Local Spatial Opportunity Structure ] ───────> 
 
 ### 2. Multi-Attribute Utility Formulation
 
-Every household $j$ computes utility as a normalized weighted score across 6 spatial dimensions, perturbed by stochastic noise $\epsilon \sim \mathcal{N}(0, 0.1^2)$:
+Every household $j$ computes utility as a normalized weighted score across 6 spatial dimensions, perturbed by stochastic noise $\epsilon \sim \mathcal{N}(0, \sigma^2)$:
 
 $$\text{Utility}_j = \frac{\sum_{i=1}^{6} \beta_i \cdot \text{Similarity}_{i,j}}{\sum_{i=1}^{6} \beta_i} + \epsilon$$
 
@@ -83,43 +114,36 @@ $$\text{Utility}_j = \frac{\sum_{i=1}^{6} \beta_i \cdot \text{Similarity}_{i,j}}
 ### 3. Migration & Relocation
 
 At each simulation tick:
-- Households are sorted by total utility; the **bottom 10% least satisfied** are marked unhappy.
+- Households are sorted by total utility; the **lowest fraction** (`relocation-fraction`, default $10\%$) are marked unhappy.
 - Unhappy agents evaluate vacant habitable patches within their reachable road network (via breadth-first search accounting for road-speed multipliers).
 - When an agent moves, attendee rosters for venues, parks, and commuter links are updated incrementally ($O(1)$) to preserve computational efficiency.
 
 ### 4. Intervention Regimes
 
 - **Emergent Venues (`emergent-venues`)**:
-  - *Ticks 0–400*: Simulation establishes baseline residential clustering ($\beta_1 = 0.5, \beta_2 = 0$).
-  - *Tick 400 Shock*: Venues are spawned directly inside emergent demographic clusters using **Lloyd's Voronoi Relaxation** (5 iterations finding spatial medoids for each ethnic cluster of capacity 50). Simultaneously, utility switches to the target experimental weights (`target-beta1`, `target-beta2`).
+  - *Ticks 0–400*: Simulation establishes baseline residential clustering under `pre-beta1-neighbors` and `pre-beta2-venue-group`.
+  - *Shock Tick*: Venues spawn directly inside emergent demographic clusters using **Lloyd's Voronoi Relaxation** (finding spatial medoids for each ethnic cluster of capacity 50). Simultaneously, utility switches to `post-beta1-neighbors` and `post-beta2-venue-group`.
 - **Timeline Staging (`timeline-experiment`)**:
-  - *Tick 400*: Introduces a single amenity at the city center.
-  - *Tick 500*: Spawns an adjacent venue of the contrasting group (local paired integration).
-  - *Tick 600*: Deploys 16 venues symmetrically across all 8 peripheral districts.
+  - *Stage 1*: Introduces a single amenity at the city center.
+  - *Stage 2*: Spawns an adjacent venue of the contrasting group (local paired integration).
+  - *Stage 3*: Deploys 16 venues symmetrically across all 8 peripheral districts.
 - **Dynamic Infrastructure (`dynamic-tick-150`)**:
   - Restructures transit grids (`build-grid` or `erase-random`) at tick 150, displacing families on newly paved corridors.
 
 ---
 
-## Analysis & Experiments: `cs2nordic2.qmd`
+## Analysis & Quarto Pipelines
 
-The Quarto document [`netlogo/cs2nordic2.qmd`](netlogo/cs2nordic2.qmd) runs headless experiments using the R package [`logolink`](https://github.com/) to communicate directly with NetLogo BehaviorSpace.
+### 1. `netlogo/segregation_experiments.qmd` *(Primary Pipeline for New Model)*
 
-### Experiment 1: Beta Weight Transition
-Evaluates what happens when agents transition from purely residential sorting to venue affiliation at Tick 400:
-- **Condition 1**: Only Neighbors ($\beta_1 = 1.0, \beta_2 = 0.0$)
-- **Condition 2**: High Neighbors ($\beta_1 = 0.75, \beta_2 = 0.25$)
-- **Condition 3**: Balanced ($\beta_1 = 0.50, \beta_2 = 0.50$)
-- **Condition 4**: High Venues ($\beta_1 = 0.25, \beta_2 = 0.75$)
-- **Condition 5**: Only Venues ($\beta_1 = 0.00, \beta_2 = 1.00$)
-- **Outputs**: Trajectory plots with median & IQR ribbons (`venues_location_relaxation.png`) and terminal distribution boxplots at Tick 800.
+Designed specifically for [`Segregation Experiments.nlogox`](netlogo/roads/Segregation%20Experiments.nlogox):
+- **Experiment 1 (Beta Weight Transitions)**: Sweeps 5 post-intervention beta mixes under emergent venues, generating median trajectory plots with IQR ribbons (`experiments_beta_transition.png`) and terminal distribution boxplots at Tick 800.
+- **Experiment 2 (Full Factorial Sweep)**: Crosses 5 utility weight mixes with 4 levels of venue exclusivity (`Strict 1.0`, `High 0.75`, `Low 0.25`, `Universal 0.0`), caches data to `results_experiments_2f.RData`, and renders multi-panel faceted trajectories (`experiments_exclusivity_relaxation.png`).
 
-### Experiment 2: Exclusivity $\times$ Utility Sweep ($5 \times 4$ Factorial)
-Crosses the 5 beta weight pairs with 4 levels of venue exclusivity:
-- **Strict (1.0)**: Strict in-group entry only.
-- **High (0.75)** / **Low (0.25)**: Probabilistic admittance governed by household adventurousness.
-- **Universal (0.0)**: Open access to all groups.
-- **Outputs**: Comprehensive multi-panel trajectory grid across Dissimilarity, Clustering, and Exposure (`venues_exclusivity_relaxation.png`).
+### 2. `netlogo/cs2nordic2.qmd` *(Original Analysis Pipeline)*
+
+Runs parameter sweeps against [`Segregation Interventions.nlogox`](netlogo/roads/Segregation%20Interventions.nlogox):
+- Investigates post-shock dissimilarity trajectories and generates publication figures `venues_location_relaxation.png` and `venues_exclusivity_relaxation.png`.
 
 ### Key Substantive Insights
 1. **The Anchor Effect**: Shifting utility towards venue co-attendance ($\beta_2 \to 1.0$) causes residential dissimilarity to decline significantly, because shared amenities anchor households in mixed residential neighborhoods even when agents maintain homophilic preferences within the venues.
@@ -131,7 +155,7 @@ Crosses the 5 beta weight pairs with 4 levels of venue exclusivity:
 
 ### Prerequisites
 
-- **NetLogo**: Version 7.0.4 or later (ensure NetLogo extensions `gis`, `nw`, and `dbscan` are installed or present in your NetLogo extensions directory).
+- **NetLogo**: Version 7.0.4 or later.
 - **R Environment**: R 4.4+ with the following packages:
   ```r
   install.packages(c("tidyverse", "patchwork", "janitor", "colorspace", "ggnewscale", "shiny", "bslib"))
@@ -139,17 +163,15 @@ Crosses the 5 beta weight pairs with 4 levels of venue exclusivity:
   remotes::install_github("bastistician/logolink")
   ```
 
-### Running the Model
+### Running Simulations
 
-1. **Interactive GUI Exploration**:
+1. **Headless Experiments in R (Recommended)**:
+   - Open [`netlogo/segregation_experiments.qmd`](netlogo/segregation_experiments.qmd) in RStudio or VS Code.
+   - Run chunks interactively or render the entire document to execute BehaviorSpace sweeps and regenerate all figures.
+2. **Interactive GUI Exploration**:
    - Open NetLogo 7.0.4.
-   - Load [`netlogo/roads/Segregation Interventions.nlogox`](netlogo/roads/Segregation%20Interventions.nlogox).
-   - Select an `intervention-scenario` (e.g. `emergent-venues` or `timeline-experiment`).
-   - Click `setup` and `go`.
-2. **Headless Experiments in R**:
-   - Open [`netlogo/cs2nordic2.qmd`](netlogo/cs2nordic2.qmd) in RStudio or VS Code.
-   - Adjust `model_path` to point to your local `.nlogox` file.
-   - Render the Quarto document or execute chunks sequentially to trigger BehaviorSpace runs and generate updated figures.
+   - Load [`netlogo/roads/Segregation Experiments.nlogox`](netlogo/roads/Segregation%20Experiments.nlogox) or [`Segregation Interventions.nlogox`](netlogo/roads/Segregation%20Interventions.nlogox).
+   - Adjust sliders, select an `intervention-scenario`, and click `setup` and `go`.
 3. **Interactive Shiny Dashboard**:
    - Run the dedicated GUI application:
      ```r

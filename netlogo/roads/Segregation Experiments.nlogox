@@ -86,6 +86,8 @@ venues-own [
   my-venue-exclusivity
   my-venue-obligatoriness
   my-attendees        
+  my-spectrum-val
+  my-venue-type
 ]
 
 parks-own [
@@ -102,7 +104,7 @@ to setup
   set colors [red blue yellow green orange]
   ifelse random-seed? [ random-seed new-seed ] [ random-seed behaviorspace-run-number ]
   
-  ;; Initialize active utility weights to pre-intervention baseline
+  ;; Initialize active utility weights from setup
   set beta1-neighbors pre-beta1-neighbors
   set beta2-venue-group pre-beta2-venue-group
 
@@ -128,10 +130,12 @@ to setup
   initialize-tract-habitable-counts
 
   setup-parks
-  setup-families
   
-  ;; Apply initial interventions if configured
+  ;; Place initial venues at setup (including parametric-setup mode)
   apply-intervention-scenario
+  
+  ;; Generate families on remaining habitable patches
+  setup-families
   
   update-patch-caches
   evaluate-venues-and-parks 
@@ -448,11 +452,13 @@ to setup-parks
 end
 
 to setup-families
-  let available-spots count habitable-patches
-  let target-population floor (available-spots * (density-percent / 100))
+  let open-habitable habitable-patches with [not any? venues-here]
+  let available-spots count open-habitable
+  let target-population floor ((count habitable-patches) * (density-percent / 100))
+  if target-population > available-spots [ set target-population available-spots ]
 
   if target-population > 0 [
-    ask n-of target-population habitable-patches [
+    ask n-of target-population open-habitable [
       sprout-families 1 [
         ifelse random-float 100 < proportion-majority
         [ set color item 0 colors ] 
@@ -519,10 +525,127 @@ to initialize-tract-habitable-counts
   ]
 end
 
+;; --- BETA SPECTRUM & PARAMETRIC VENUE PLACEMENT ---
+
+to-report sample-beta [ alpha-param beta-param ]
+  let a ifelse-value (alpha-param > 0.001) [ alpha-param ] [ 0.001 ]
+  let b ifelse-value (beta-param > 0.001) [ beta-param ] [ 0.001 ]
+  let g1 random-gamma a 1.0
+  let g2 random-gamma b 1.0
+  if (g1 + g2) <= 0 [ report 0.5 ]
+  report g1 / (g1 + g2)
+end
+
+to-report clamp-coord [ val low high ]
+  if val < low [ report low ]
+  if val > high [ report high ]
+  report val
+end
+
+to generate-parametric-venues
+  if venues-number <= 0 [ stop ]
+  
+  let red-draws []
+  let neutral-draws []
+  let blue-draws []
+  
+  repeat venues-number [
+    let x sample-beta venue-beta-alpha venue-beta-beta
+    (ifelse
+      x < (1.0 / 3.0) [
+        set red-draws lput x red-draws
+      ]
+      x <= (2.0 / 3.0) [
+        set neutral-draws lput x neutral-draws
+      ]
+      [
+        set blue-draws lput x blue-draws
+      ]
+    )
+  ]
+  
+  place-venues-for-type "red" (item 0 colors) venue-exclusivity red-draws red-centrality red-jitter red-clusters-k red-closeness 0.0
+  place-venues-for-type "non-exclusive" gray 0.0 neutral-draws neutral-centrality neutral-jitter neutral-clusters-k neutral-closeness 120.0
+  place-venues-for-type "blue" (item 1 colors) venue-exclusivity blue-draws blue-centrality blue-jitter blue-clusters-k blue-closeness 240.0
+end
+
+to place-venues-for-type [ v-type v-color v-excl spec-list c-val j-val k-val s-val base-angle ]
+  let n-v length spec-list
+  if n-v = 0 [ stop ]
+  
+  let k max list 1 (min list (round k-val) n-v)
+  let r-max (max-pxcor - 2)
+  let r-min ifelse-value (k > 1) [ 3.0 ] [ 0.0 ]
+  let r-base r-min + ((1.0 - c-val) * (r-max - r-min))
+  
+  ;; Stage 1: Compute k cluster anchor coordinates
+  let anchor-xs []
+  let anchor-ys []
+  let j 0
+  while [j < k] [
+    let reg-angle (base-angle + (j * (360.0 / k)))
+    let angle reg-angle + (j-val * (random-float 360.0 - 180.0))
+    let radial-noise (random-float (2.0 * r-max) - r-max) * 0.35 * j-val
+    let r clamp-coord (r-base + radial-noise) 0.0 r-max
+    
+    let dir-x sin angle
+    let dir-y cos angle
+    let sq-scale 1.0 / (max (list (abs dir-x) (abs dir-y) 0.0001))
+    let blend-scale (c-val * 1.0) + ((1.0 - c-val) * sq-scale)
+    
+    let ax clamp-coord (r * dir-x * blend-scale) (min-pxcor + 1) (max-pxcor - 1)
+    let ay clamp-coord (r * dir-y * blend-scale) (min-pycor + 1) (max-pycor - 1)
+    
+    set anchor-xs lput ax anchor-xs
+    set anchor-ys lput ay anchor-ys
+    set j j + 1
+  ]
+  
+  ;; Stage 2: Place each venue around its assigned cluster anchor
+  let d-max 14.0
+  let spread-r (1.0 - s-val) * d-max
+  
+  let i 0
+  while [i < n-v] [
+    let c-idx (i mod k)
+    let m floor (i / k)
+    let m-total (floor (n-v / k)) + (ifelse-value (c-idx < (n-v mod k)) [ 1 ] [ 0 ])
+    
+    let ax item c-idx anchor-xs
+    let ay item c-idx anchor-ys
+    
+    let local-reg-angle (base-angle + (m * (360.0 / (max list 1 m-total))))
+    let local-angle local-reg-angle + (j-val * (random-float 360.0 - 180.0))
+    
+    let d 0.0
+    ifelse m-total > 1 [
+      set d spread-r * ((1.0 - j-val) + (j-val * (random-float 1.2)))
+    ] [
+      set d spread-r * j-val * (random-float 0.5)
+    ]
+    
+    let vx clamp-coord (ax + (d * sin local-angle)) (min-pxcor + 1) (max-pxcor - 1)
+    let vy clamp-coord (ay + (d * cos local-angle)) (min-pycor + 1) (max-pycor - 1)
+    
+    let available-spots habitable-patches with [not any? venues-here]
+    if any? available-spots [
+      let target-patch min-one-of available-spots [distancexy vx vy]
+      create-typed-venue-at target-patch v-color v-type v-excl (item i spec-list)
+    ]
+    
+    set i i + 1
+  ]
+end
+
 to apply-intervention-scenario
-  if intervention-scenario = "dynamic-tick-150" or intervention-scenario = "timeline-experiment" or intervention-scenario = "emergent-venues" [ stop ]
+  if intervention-scenario = "dynamic-tick-150" or intervention-scenario = "timeline-experiment" or intervention-scenario = "emergent-venues" or intervention-scenario = "none" [ stop ]
   
   ask venues [ die ]
+  
+  if intervention-scenario = "parametric-setup" [
+    generate-parametric-venues
+    stop
+  ]
   
   let venues-created 0
   let active-colors sublist colors 0 number-of-ethnicities
@@ -577,20 +700,55 @@ to apply-intervention-scenario
 end
 
 to create-venue-at [ target-p v-color ]
+  let inferred-type ifelse-value (v-color = item 0 colors) [ "red" ] [ ifelse-value (v-color = item 1 colors) [ "blue" ] [ "non-exclusive" ] ]
+  let inferred-excl ifelse-value (inferred-type = "non-exclusive") [ 0.0 ] [ venue-exclusivity ]
+  create-typed-venue-at target-p v-color inferred-type inferred-excl 0.5
+end
+
+to create-typed-venue-at [ target-p v-color v-type v-excl spec-val ]
   ask target-p [
+    if any? families-here [
+      let empty-spots habitable-patches with [not any? turtles-here and self != target-p]
+      ifelse any? empty-spots [
+        ask families-here [
+          move-to one-of empty-spots
+          set home-pxcor pxcor
+          set home-pycor pycor
+        ]
+      ] [
+        ask families-here [ die ]
+      ]
+    ]
     sprout-venues 1 [
       set shape "house"
       set color yellow
       set size 1.5
       stamp
-      ask families-here [ die ]
       set color v-color
       set size 1
-      set my-venue-exclusivity venue-exclusivity
+      set my-venue-type v-type
+      set my-venue-exclusivity v-excl
+      set my-spectrum-val spec-val
       set my-venue-obligatoriness 1
       set my-attendees (turtle-set nobody)
     ]
   ]
+end
+
+to-report count-red-venues
+  report count venues with [my-venue-type = "red"]
+end
+
+to-report count-blue-venues
+  report count venues with [my-venue-type = "blue"]
+end
+
+to-report count-neutral-venues
+  report count venues with [my-venue-type = "non-exclusive"]
+end
+
+to-report mean-venue-dist-center
+  ifelse any? venues [ report mean [distancexy 0 0] of venues ] [ report 0 ]
 end
 
 ;; --- LOGIC UPDATES ---
@@ -610,7 +768,7 @@ to evaluate-venues-and-parks
     let my-adv my-adventurousness
     let my-com my-commitment
     
-    let open-venues possible-venues with [(color = my-color) or (my-venue-exclusivity < my-adv)]
+    let open-venues possible-venues with [(my-venue-type = "non-exclusive") or (color = my-color) or (my-venue-exclusivity < my-adv)]
     set visited-venues open-venues with [(1 - my-venue-obligatoriness) < my-com]
     
     let family-agent self
@@ -738,7 +896,7 @@ to find-new-spot
     let my-adv my-adventurousness
     let my-com my-commitment
     
-    let open-venues possible-venues with [(color = my-color) or (my-venue-exclusivity < my-adv)]
+    let open-venues possible-venues with [(my-venue-type = "non-exclusive") or (color = my-color) or (my-venue-exclusivity < my-adv)]
     set visited-venues open-venues with [(1 - my-venue-obligatoriness) < my-com]
 
     if any? visited-venues [ ask visited-venues [ set my-attendees (turtle-set my-attendees family-agent) ] ]
@@ -832,6 +990,23 @@ to calculate-segregation-dimensions
     set current-grid current-grid + 1
   ]
   set index-concentration (delta-sum / 2)
+  
+  ;; Relative Centralization Index (RCI)
+  let sorted-tracts sort-by [ [t1 t2] -> [distancexy 0 0] of t1 < [distancexy 0 0] of t2 ] tract-centers
+  let cum-X 0
+  let cum-Y 0
+  let rci-sum 0
+  foreach sorted-tracts [ t ->
+    let local-fam [families in-radius 5] of t
+    let p-x (count local-fam with [color = gx-color]) / pop-x
+    let p-y (count local-fam with [color != gx-color]) / pop-y
+    let prev-cum-X cum-X
+    let prev-cum-Y cum-Y
+    set cum-X cum-X + p-x
+    set cum-Y cum-Y + p-y
+    set rci-sum rci-sum + (prev-cum-X * cum-Y) - (cum-X * prev-cum-Y)
+  ]
+  set index-centrality rci-sum
   
   let n_samp (ifelse-value (clustering-sample-size > 0) [clustering-sample-size] [150])
   let sample-x n-of (ifelse-value (pop-x > n_samp) [n_samp] [pop-x]) families with [color = gx-color]
@@ -998,7 +1173,7 @@ end]]></code>
     
     <!-- Pre- and Post-Beta Weight Controls -->
     <slider x="1135" step="0.05" y="30" max="1.0" width="210" display="pre-beta1-neighbors" height="50" min="0.0" direction="Horizontal" default="0.5" variable="pre-beta1-neighbors"></slider>
-    <slider x="1135" step="0.05" y="85" max="1.0" width="210" display="pre-beta2-venue-group" height="50" min="0.0" direction="Horizontal" default="0.0" variable="pre-beta2-venue-group"></slider>
+    <slider x="1135" step="0.05" y="85" max="1.0" width="210" display="pre-beta2-venue-group" height="50" min="0.0" direction="Horizontal" default="0.5" variable="pre-beta2-venue-group"></slider>
     <slider x="1135" step="0.05" y="145" max="1.0" width="210" display="post-beta1-neighbors" height="50" min="0.0" direction="Horizontal" default="1.0" variable="post-beta1-neighbors"></slider>
     <slider x="1135" step="0.05" y="200" max="1.0" width="210" display="post-beta2-venue-group" height="50" min="0.0" direction="Horizontal" default="0.0" variable="post-beta2-venue-group"></slider>
     <slider x="1135" step="0.05" y="255" max="1.0" width="210" display="beta3-venue-loc" height="50" min="0.0" direction="Horizontal" default="0.0" variable="beta3-venue-loc"></slider>
@@ -1024,13 +1199,14 @@ end]]></code>
     <!-- Transit & Scenario Choosers -->
     <slider x="115" step="1" y="670" max="20" width="250" display="travel-distance" height="50" min="0" direction="Horizontal" default="5.0" variable="travel-distance"></slider>
     <slider x="115" step="1" y="725" max="10" width="250" display="road-multiplier" height="50" min="0" direction="Horizontal" default="1.0" variable="road-multiplier"></slider>
-    <chooser x="375" y="670" height="60" variable="road-scenario" current="1" width="250" display="road-scenario">
+    <chooser x="375" y="670" height="60" variable="road-scenario" current="0" width="250" display="road-scenario">
       <choice type="string" value="empty"></choice>
       <choice type="string" value="grid"></choice>
       <choice type="string" value="isolated-communities"></choice>
       <choice type="string" value="connected-communities"></choice>
     </chooser>
-    <chooser x="375" y="735" height="60" variable="intervention-scenario" current="4" width="250" display="intervention-scenario">
+    <chooser x="375" y="735" height="60" variable="intervention-scenario" current="0" width="250" display="intervention-scenario">
+      <choice type="string" value="parametric-setup"></choice>
       <choice type="string" value="random"></choice>
       <choice type="string" value="structured"></choice>
       <choice type="string" value="dynamic-tick-150"></choice>
@@ -1054,6 +1230,28 @@ end]]></code>
       <choice type="string" value="erase-random"></choice>
     </chooser>
     <slider x="630" step="1" y="875" max="100" width="250" display="dynamic-road-param" height="50" min="0" direction="Horizontal" default="55.0" variable="dynamic-road-param"></slider>
+
+    <!-- Venue Type Spectrum Beta Distribution Controls -->
+    <slider x="1360" step="0.1" y="280" max="10.0" width="220" display="venue-beta-alpha" height="50" min="0.1" direction="Horizontal" default="1.0" variable="venue-beta-alpha"></slider>
+    <slider x="1360" step="0.1" y="335" max="10.0" width="220" display="venue-beta-beta" height="50" min="0.1" direction="Horizontal" default="1.0" variable="venue-beta-beta"></slider>
+
+    <!-- Red Venue Placement Controls -->
+    <slider x="1600" step="0.05" y="30" max="1.0" width="210" display="red-centrality" height="50" min="0.0" direction="Horizontal" default="0.5" variable="red-centrality"></slider>
+    <slider x="1600" step="0.05" y="85" max="1.0" width="210" display="red-jitter" height="50" min="0.0" direction="Horizontal" default="0.0" variable="red-jitter"></slider>
+    <slider x="1600" step="1.0" y="140" max="20.0" width="210" display="red-clusters-k" height="50" min="1.0" direction="Horizontal" default="2.0" variable="red-clusters-k"></slider>
+    <slider x="1600" step="0.05" y="195" max="1.0" width="210" display="red-closeness" height="50" min="0.0" direction="Horizontal" default="0.5" variable="red-closeness"></slider>
+
+    <!-- Blue Venue Placement Controls -->
+    <slider x="1600" step="0.05" y="270" max="1.0" width="210" display="blue-centrality" height="50" min="0.0" direction="Horizontal" default="0.5" variable="blue-centrality"></slider>
+    <slider x="1600" step="0.05" y="325" max="1.0" width="210" display="blue-jitter" height="50" min="0.0" direction="Horizontal" default="0.0" variable="blue-jitter"></slider>
+    <slider x="1600" step="1.0" y="380" max="20.0" width="210" display="blue-clusters-k" height="50" min="1.0" direction="Horizontal" default="2.0" variable="blue-clusters-k"></slider>
+    <slider x="1600" step="0.05" y="435" max="1.0" width="210" display="blue-closeness" height="50" min="0.0" direction="Horizontal" default="0.5" variable="blue-closeness"></slider>
+
+    <!-- Non-Exclusive (Neutral) Venue Placement Controls -->
+    <slider x="1600" step="0.05" y="510" max="1.0" width="210" display="neutral-centrality" height="50" min="0.0" direction="Horizontal" default="0.5" variable="neutral-centrality"></slider>
+    <slider x="1600" step="0.05" y="565" max="1.0" width="210" display="neutral-jitter" height="50" min="0.0" direction="Horizontal" default="0.0" variable="neutral-jitter"></slider>
+    <slider x="1600" step="1.0" y="620" max="20.0" width="210" display="neutral-clusters-k" height="50" min="1.0" direction="Horizontal" default="2.0" variable="neutral-clusters-k"></slider>
+    <slider x="1600" step="0.05" y="675" max="1.0" width="210" display="neutral-closeness" height="50" min="0.0" direction="Horizontal" default="0.5" variable="neutral-closeness"></slider>
   </widgets>
   <info>## Segregation Experiments Model
 
