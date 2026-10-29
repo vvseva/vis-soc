@@ -226,7 +226,7 @@ results_exp1 <- exp1_scenarios |>
       run_metrics_every_step = TRUE,
       setup = "setup",
       go = "go",
-      time_limit = 400,
+      time_limit = 600,
       metrics = c(
         "index-exposure",
         "index-dissimilarity",
@@ -300,7 +300,7 @@ p_exp1_traj <- ggplot(
 print(p_exp1_traj)
 
 ggsave(
-  "experiments_venue_spatial_topology.png",
+  "1-experiments_venue_spatial_topology.png",
   p_exp1_traj,
   width = 10,
   height = 7.5,
@@ -427,7 +427,7 @@ results_exp2 <- exp2_scenarios |>
       run_metrics_every_step = TRUE,
       setup = "setup",
       go = "go",
-      time_limit = 400,
+      time_limit = 600,
       metrics = c(
         "index-exposure",
         "index-dissimilarity",
