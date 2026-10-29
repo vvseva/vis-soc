@@ -104,6 +104,9 @@ to setup
   set colors [red blue yellow green orange]
   ifelse random-seed? [ random-seed new-seed ] [ random-seed behaviorspace-run-number ]
   
+  ;; Override parameters from Sobol' design matrix row when sobol-row > 0
+  if sobol-row > 0 [ load-sobol-row ]
+  
   ;; Initialize active utility weights from setup
   set beta1-neighbors pre-beta1-neighbors
   set beta2-venue-group pre-beta2-venue-group
@@ -1117,6 +1120,34 @@ to-report find-cluster-medoid [ cluster-set ]
   let cx mean [xcor] of cluster-set
   let cy mean [ycor] of cluster-set
   report min-one-of cluster-set [ distancexy cx cy ]
+end
+
+to load-sobol-row
+  if file-exists? "sobol_design.txt" [
+    file-open "sobol_design.txt"
+    let all-rows file-read
+    file-close
+    if is-list? all-rows and sobol-row <= length all-rows [
+      let r item (sobol-row - 1) all-rows
+      set pre-beta1-neighbors item 0 r
+      set pre-beta2-venue-group item 1 r
+      set venue-exclusivity item 2 r
+      set venue-beta-alpha item 3 r
+      set venue-beta-beta item 4 r
+      set red-centrality item 5 r
+      set red-jitter item 6 r
+      set red-clusters-k item 7 r
+      set red-closeness item 8 r
+      set blue-centrality item 9 r
+      set blue-jitter item 10 r
+      set blue-clusters-k item 11 r
+      set blue-closeness item 12 r
+      set neutral-centrality item 13 r
+      set neutral-jitter item 14 r
+      set neutral-clusters-k item 15 r
+      set neutral-closeness item 16 r
+    ]
+  ]
 end]]></code>
   <widgets>
     <view x="295" wrappingAllowedX="false" y="10" frameRate="30.0" minPycor="-25" height="397" showTickCounter="true" patchSize="8.0" fontSize="10" wrappingAllowedY="false" width="397" tickCounterLabel="ticks" maxPycor="25" updateMode="1" maxPxcor="25" minPxcor="-25"></view>
@@ -1242,6 +1273,7 @@ end]]></code>
     <slider x="1600" step="0.05" y="565" max="1.0" width="210" display="neutral-jitter" height="50" min="0.0" direction="Horizontal" default="0.0" variable="neutral-jitter"></slider>
     <slider x="1600" step="1.0" y="620" max="20.0" width="210" display="neutral-clusters-k" height="50" min="1.0" direction="Horizontal" default="1.0" variable="neutral-clusters-k"></slider>
     <slider x="1600" step="0.05" y="675" max="1.0" width="210" display="neutral-closeness" height="50" min="0.0" direction="Horizontal" default="1.0" variable="neutral-closeness"></slider>
+    <slider x="1360" step="1" y="390" max="50000" width="220" display="sobol-row" height="50" min="0" direction="Horizontal" default="0.0" variable="sobol-row"></slider>
   </widgets>
   <info>## Segregation Experiments Model
 
